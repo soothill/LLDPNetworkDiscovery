@@ -719,21 +719,29 @@ class LLDPDiscovery:
             self.logger.error(f"LLDP command failed on {device.hostname}: {stderr}")
 
             # Special handling for Linux/Proxmox sudo issues
-            if device.device_type in ['linux', 'proxmox'] and ('sudo' in stderr.lower() or 'permission denied' in stderr.lower()):
+            if device.device_type in ['linux', 'proxmox'] and ('sudo' in stderr.lower() or 'permission denied' in stderr.lower() or 'lldpctl' in stderr.lower()):
+                self.logger.error("")
                 self.logger.error("=" * 60)
                 self.logger.error("SUDO CONFIGURATION REQUIRED")
                 self.logger.error("=" * 60)
                 self.logger.error(f"The user '{device.username}' needs sudo access for lldpctl on {device.hostname}")
                 self.logger.error("")
-                self.logger.error("Add the following line to /etc/sudoers using 'visudo':")
-                self.logger.error(f"  {device.username} ALL=(ALL) NOPASSWD: /usr/bin/lldpctl")
+                self.logger.error("Step 1: Create sudoers file for lldp:")
+                self.logger.error("  sudo visudo -f /etc/sudoers.d/lldp")
                 self.logger.error("")
-                self.logger.error("Or add to /etc/sudoers.d/lldp:")
-                self.logger.error(f"  echo '{device.username} ALL=(ALL) NOPASSWD: /usr/bin/lldpctl' | sudo tee /etc/sudoers.d/lldp")
+                self.logger.error("Step 2: Add this line (supports both /usr/bin and /usr/sbin paths):")
+                self.logger.error(f"  {device.username} ALL=(ALL) NOPASSWD: /usr/bin/lldpctl, /usr/sbin/lldpctl, /usr/bin/ethtool, /usr/sbin/ethtool")
                 self.logger.error("")
-                self.logger.error("For multiple users, you can use a group:")
-                self.logger.error("  %netadmin ALL=(ALL) NOPASSWD: /usr/bin/lldpctl")
+                self.logger.error("Step 3: Save and exit (Ctrl+X, then Y in nano; :wq in vi)")
+                self.logger.error("")
+                self.logger.error("Alternative - Quick command (run on the Linux host):")
+                self.logger.error(f"  echo '{device.username} ALL=(ALL) NOPASSWD: /usr/bin/lldpctl, /usr/sbin/lldpctl, /usr/bin/ethtool, /usr/sbin/ethtool' | sudo tee /etc/sudoers.d/lldp")
+                self.logger.error("  sudo chmod 0440 /etc/sudoers.d/lldp")
+                self.logger.error("")
+                self.logger.error("For multiple users, use a group instead:")
+                self.logger.error("  %netadmin ALL=(ALL) NOPASSWD: /usr/bin/lldpctl, /usr/sbin/lldpctl, /usr/bin/ethtool, /usr/sbin/ethtool")
                 self.logger.error("=" * 60)
+                self.logger.error("")
 
             ssh.close()
             return []

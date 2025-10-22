@@ -86,15 +86,27 @@ This creates `devices.json` with the following structure:
 - **IMPORTANT**: User must have sudo privileges for `lldpctl` and `ethtool`
 
 **Sudo Configuration** (required):
-Add to `/etc/sudoers.d/lldp`:
+
+Create the sudoers file:
 ```bash
-# Replace 'username' with your SSH username
-username ALL=(ALL) NOPASSWD: /usr/bin/lldpctl, /usr/sbin/ethtool
+sudo visudo -f /etc/sudoers.d/lldp
 ```
 
-Or for a group:
+Add this line (supports both /usr/bin and /usr/sbin paths):
 ```bash
-%netadmin ALL=(ALL) NOPASSWD: /usr/bin/lldpctl, /usr/sbin/ethtool
+# Replace 'username' with your SSH username
+username ALL=(ALL) NOPASSWD: /usr/bin/lldpctl, /usr/sbin/lldpctl, /usr/bin/ethtool, /usr/sbin/ethtool
+```
+
+**Quick one-line setup:**
+```bash
+echo 'username ALL=(ALL) NOPASSWD: /usr/bin/lldpctl, /usr/sbin/lldpctl, /usr/bin/ethtool, /usr/sbin/ethtool' | sudo tee /etc/sudoers.d/lldp
+sudo chmod 0440 /etc/sudoers.d/lldp
+```
+
+**For multiple users (group-based):**
+```bash
+%netadmin ALL=(ALL) NOPASSWD: /usr/bin/lldpctl, /usr/sbin/lldpctl, /usr/bin/ethtool, /usr/sbin/ethtool
 ```
 
 #### MikroTik RouterOS
