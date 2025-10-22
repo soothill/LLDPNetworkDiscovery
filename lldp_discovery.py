@@ -120,63 +120,10 @@ class SSHConnection:
         try:
             stdin, stdout, stderr = self.client.exec_command(command, timeout=self.timeout, get_pty=request_pty)
 
-            # For MikroTik with PTY, use non-blocking read with sleep
-            # MikroTik PTY can hang on blocking reads
-            if request_pty and self.device.device_type == 'mikrotik':
-                import time
-                import re
-
-                # Don't send extra newline - exec_command already sent the command
-                # Just wait for output
-                time.sleep(1.0)  # Wait longer for command to execute
-
-                # Read available output using non-blocking recv
-                stdout_data = ''
-                stderr_data = ''
-                channel = stdout.channel
-
-                # Read until no more data or timeout
-                start_time = time.time()
-                while time.time() - start_time < self.timeout:
-                    if channel.recv_ready():
-                        chunk = channel.recv(4096).decode('utf-8', errors='ignore')
-                        stdout_data += chunk
-                        # Reset start time when we get data
-                        start_time = time.time()
-                    elif channel.recv_stderr_ready():
-                        chunk = channel.recv_stderr(4096).decode('utf-8', errors='ignore')
-                        stderr_data += chunk
-                        start_time = time.time()
-                    else:
-                        # No more data available, wait a bit
-                        time.sleep(0.1)
-                        # If we've received data and no more is coming for 0.5s, break
-                        if stdout_data and (time.time() - start_time) > 0.5:
-                            if not channel.recv_ready():
-                                break
-
-                # Debug: show raw output before stripping
-                print(f"DEBUG RAW: stdout length={len(stdout_data)}, repr={repr(stdout_data[:200])}")
-
-                # Strip ANSI escape sequences and control characters
-                # Pattern matches: ESC [ ... letter, and other control codes
-                ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
-                stdout_data = ansi_escape.sub('', stdout_data)
-                stderr_data = ansi_escape.sub('', stderr_data)
-
-                print(f"DEBUG AFTER STRIP: stdout length={len(stdout_data)}, first 200={repr(stdout_data[:200])}")
-
-                # Get exit status (should be available now)
-                if channel.exit_status_ready():
-                    exit_code = channel.recv_exit_status()
-                else:
-                    exit_code = 0  # Assume success if we got output
-            else:
-                # Normal flow: wait for exit status first
-                exit_code = stdout.channel.recv_exit_status()
-                # Read output
-                stdout_data = stdout.read().decode('utf-8')
-                stderr_data = stderr.read().decode('utf-8')
+            # Normal flow: wait for exit status first, then read output
+            exit_code = stdout.channel.recv_exit_status()
+            stdout_data = stdout.read().decode('utf-8')
+            stderr_data = stderr.read().decode('utf-8')
 
             # When get_pty=True, stderr is redirected to stdout, so we need to handle this
             # If stderr is empty but command failed, the error is in stdout
@@ -832,8 +779,13 @@ class LLDPDiscovery:
             ssh.close()
             return []
 
-        # MikroTik needs PTY to show all columns in table output
-        request_pty = device.device_type == 'mikrotik'
+        # Don't use PTY for MikroTik - it goes into interactive mode
+        # Instead, use export command to set terminal width
+        if device.device_type == 'mikrotik':
+            # Set terminal width to wide value before running command
+            command = f':global terminalWidth 512; {command}'
+
+        request_pty = False  # Don't use PTY for any device by default (only sudo needs it)
         stdout, stderr, exit_code = ssh.execute_command(command, request_pty=request_pty)
 
         if exit_code != 0:
