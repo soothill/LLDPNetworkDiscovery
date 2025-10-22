@@ -396,6 +396,8 @@ class LLDPParser:
          #  INTERFACE      ADDRESS        MAC-ADDRESS        IDENTITY           VERSION
          0  ether1         10.10.201.5    94:F1:28:8A:93:A1  2930F-48
             bridge
+         5  sfp-sfpplus21  fe80::4aa9... 48:A9:8A:D7:66:31  MikroTik RB5009    7.19.1 (stable)
+            trunk
         """
         neighbors = []
         lines = output.split('\n')
@@ -408,12 +410,13 @@ class LLDPParser:
                 break
 
         if header_line_idx == -1:
+            print(f"DEBUG: No header found in MikroTik output for {hostname}")
+            print(f"DEBUG: First 500 chars: {output[:500]}")
             return neighbors
 
-        # Process data lines (skip header and column definition lines)
-        current_interface = None
-        current_identity = None
+        print(f"DEBUG: Found header at line {header_line_idx} for {hostname}")
 
+        # Process data lines (skip header and column definition lines)
         for i in range(header_line_idx + 1, len(lines)):
             line = lines[i]
 
@@ -421,18 +424,38 @@ class LLDPParser:
             if not line.strip():
                 continue
 
-            # Check if this is a numbered entry (starts with number and space)
+            # Check if this is a numbered entry (starts with spaces, number, spaces, then interface name)
             # Format: " 0  ether1         10.10.201.5    94:F1:28:8A:93:A1  2930F-48"
-            match = re.match(r'^\s*\d+\s+(\S+)\s+.*?([A-Za-z0-9][\w\-\.]+)\s*$', line)
+            # or:     " 5  sfp-sfpplus21  fe80::...      48:A9:8A:D7:66:31  MikroTik RB5009    7.19.1..."
+            match = re.match(r'^\s*(\d+)\s+(\S+)\s+', line)
             if match:
-                interface = match.group(1)
-                identity = match.group(2)
+                entry_num = match.group(1)
+                interface = match.group(2)
 
-                # Only add if we have valid physical interface (not vlan, bridge, etc)
-                # and a non-IP identity
-                if interface and identity and not re.match(r'^\d+\.', identity):
+                # Extract everything after the interface
+                rest_of_line = line[match.end():]
+
+                # Split remaining fields - typically: ADDRESS, MAC-ADDRESS, IDENTITY, VERSION
+                # We need to find the IDENTITY field (4th column after interface)
+                fields = rest_of_line.split()
+
+                # The identity is usually the field that's not an IP or MAC address
+                identity = None
+                for field in fields:
+                    # Skip IPs (v4 and v6)
+                    if re.match(r'^(\d+\.|\w+:)', field):
+                        continue
+                    # Skip MAC addresses
+                    if re.match(r'^[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:', field):
+                        continue
+                    # This should be the identity
+                    identity = field
+                    break
+
+                if identity and interface:
                     # Filter out virtual interfaces
                     if not any(x in interface.lower() for x in ['vlan', 'bridge.']):
+                        print(f"DEBUG: Found neighbor - Interface: {interface}, Identity: {identity}")
                         neighbors.append(LLDPNeighbor(
                             local_device=hostname,
                             local_port=interface,
@@ -440,7 +463,12 @@ class LLDPParser:
                             remote_port='',  # Not available in this format
                             remote_description=''
                         ))
+                    else:
+                        print(f"DEBUG: Skipped virtual interface: {interface}")
+                else:
+                    print(f"DEBUG: Could not extract identity from line: {line}")
 
+        print(f"DEBUG: Total neighbors found for {hostname}: {len(neighbors)}")
         return neighbors
 
     @staticmethod
