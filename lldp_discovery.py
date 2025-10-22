@@ -124,12 +124,11 @@ class SSHConnection:
             # MikroTik PTY can hang on blocking reads
             if request_pty and self.device.device_type == 'mikrotik':
                 import time
-                # Send newline to ensure command executes
-                stdin.write('\n')
-                stdin.flush()
+                import re
 
-                # Wait a bit for command to execute
-                time.sleep(0.5)
+                # Don't send extra newline - exec_command already sent the command
+                # Just wait for output
+                time.sleep(1.0)  # Wait longer for command to execute
 
                 # Read available output using non-blocking recv
                 stdout_data = ''
@@ -142,17 +141,25 @@ class SSHConnection:
                     if channel.recv_ready():
                         chunk = channel.recv(4096).decode('utf-8', errors='ignore')
                         stdout_data += chunk
+                        # Reset start time when we get data
+                        start_time = time.time()
                     elif channel.recv_stderr_ready():
                         chunk = channel.recv_stderr(4096).decode('utf-8', errors='ignore')
                         stderr_data += chunk
+                        start_time = time.time()
                     else:
                         # No more data available, wait a bit
                         time.sleep(0.1)
-                        # If we've received data and no more is coming, break
-                        if stdout_data and not channel.recv_ready():
-                            time.sleep(0.2)  # Final wait
+                        # If we've received data and no more is coming for 0.5s, break
+                        if stdout_data and (time.time() - start_time) > 0.5:
                             if not channel.recv_ready():
                                 break
+
+                # Strip ANSI escape sequences and control characters
+                # Pattern matches: ESC [ ... letter, and other control codes
+                ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+                stdout_data = ansi_escape.sub('', stdout_data)
+                stderr_data = ansi_escape.sub('', stderr_data)
 
                 # Get exit status (should be available now)
                 if channel.exit_status_ready():
