@@ -1115,6 +1115,9 @@ class LLDPDiscovery:
 
     def generate_html_visualization(self, output_file: str = 'network_topology.html'):
         """Generate interactive HTML visualization of network topology"""
+        from collections import defaultdict
+        import math
+
         if not self.neighbors:
             self.logger.error("No topology data to visualize")
             return
@@ -1615,9 +1618,6 @@ class LLDPDiscovery:
             device_positions[device_name] = (x, y)
 
         # Group connections by device pair to handle multiple links
-        from collections import defaultdict
-        import math
-
         connection_groups = defaultdict(list)
         for conn in connections:
             if conn['local_device'] in device_positions and conn['remote_device'] in device_positions:
