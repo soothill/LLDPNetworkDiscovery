@@ -1102,30 +1102,35 @@
             });
 
             node.addEventListener('mousemove', (e) => {
-                const tooltipWidth = 300; // Approximate tooltip width
-                const tooltipHeight = 200; // Approximate tooltip height
-                const padding = 20;
+                const padding = 15;
+
+                // Get actual tooltip dimensions
+                const tooltipRect = tooltip.getBoundingClientRect();
+                const tooltipWidth = tooltipRect.width || 300;
+                const tooltipHeight = tooltipRect.height || 200;
 
                 let left = e.clientX + padding;
                 let top = e.clientY + padding;
 
-                // Keep tooltip within viewport horizontally
+                // Check if tooltip would go off right edge
                 if (left + tooltipWidth > window.innerWidth) {
+                    // Position to left of cursor instead
                     left = e.clientX - tooltipWidth - padding;
                 }
 
-                // Keep tooltip within viewport vertically
+                // Check if tooltip would go off bottom edge
                 if (top + tooltipHeight > window.innerHeight) {
+                    // Position above cursor instead
                     top = e.clientY - tooltipHeight - padding;
                 }
 
                 // Ensure tooltip doesn't go off left edge
-                if (left < 0) {
+                if (left < padding) {
                     left = padding;
                 }
 
                 // Ensure tooltip doesn't go off top edge
-                if (top < 0) {
+                if (top < padding) {
                     top = padding;
                 }
 
