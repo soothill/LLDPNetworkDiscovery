@@ -1,0 +1,46 @@
+# Backup and temporary files
+*.backup
+*.broken
+*.bak
+*.tmp
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Generated reports and outputs
+*.csv
+lldp_report_*.html
+network_topology_*
+network_diagram_*
+
+# Credentials and config (SECURITY)
+devices.json
+config.json
+*.secret
+*.key
+*.pem
+id_rsa*
+
+# Logs
+*.log
