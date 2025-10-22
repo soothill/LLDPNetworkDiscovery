@@ -130,8 +130,8 @@ class PortSpeedDetector:
         """Get port speeds for Linux interfaces using ethtool"""
         speeds = {}
         for port in ports:
-            # Try ethtool first
-            stdout, stderr, exit_code = ssh.execute_command(f"ethtool {port} 2>/dev/null | grep -i speed")
+            # Try ethtool first (with sudo for permission)
+            stdout, stderr, exit_code = ssh.execute_command(f"sudo ethtool {port} 2>/dev/null | grep -i speed")
             if exit_code == 0 and stdout:
                 # Parse "Speed: 1000Mb/s" or "Speed: 10000Mb/s"
                 match = re.search(r'Speed:\s*(\d+)Mb/s', stdout, re.IGNORECASE)
@@ -140,7 +140,7 @@ class PortSpeedDetector:
                     speeds[port] = PortSpeedDetector._format_speed(speed_mbps)
                     continue
 
-            # Fallback: try /sys/class/net
+            # Fallback: try /sys/class/net (usually readable without sudo)
             stdout, stderr, exit_code = ssh.execute_command(f"cat /sys/class/net/{port}/speed 2>/dev/null")
             if exit_code == 0 and stdout.strip().isdigit():
                 speed_mbps = int(stdout.strip())
@@ -699,12 +699,12 @@ class LLDPDiscovery:
 
         # Device-specific LLDP commands
         lldp_commands = {
-            'linux': 'lldpctl',
+            'linux': 'sudo lldpctl',
             'mikrotik': '/ip neighbor print detail',
             'arista': 'show lldp neighbors detail',
             'aruba': 'show lldp neighbors detail',
             'ruijie': 'show lldp neighbors detail',
-            'proxmox': 'lldpctl'
+            'proxmox': 'sudo lldpctl'
         }
 
         command = lldp_commands.get(device.device_type)
@@ -716,7 +716,25 @@ class LLDPDiscovery:
         stdout, stderr, exit_code = ssh.execute_command(command)
 
         if exit_code != 0:
-            self.logger.warning(f"LLDP command failed on {device.hostname}: {stderr}")
+            self.logger.error(f"LLDP command failed on {device.hostname}: {stderr}")
+
+            # Special handling for Linux/Proxmox sudo issues
+            if device.device_type in ['linux', 'proxmox'] and ('sudo' in stderr.lower() or 'permission denied' in stderr.lower()):
+                self.logger.error("=" * 60)
+                self.logger.error("SUDO CONFIGURATION REQUIRED")
+                self.logger.error("=" * 60)
+                self.logger.error(f"The user '{device.username}' needs sudo access for lldpctl on {device.hostname}")
+                self.logger.error("")
+                self.logger.error("Add the following line to /etc/sudoers using 'visudo':")
+                self.logger.error(f"  {device.username} ALL=(ALL) NOPASSWD: /usr/bin/lldpctl")
+                self.logger.error("")
+                self.logger.error("Or add to /etc/sudoers.d/lldp:")
+                self.logger.error(f"  echo '{device.username} ALL=(ALL) NOPASSWD: /usr/bin/lldpctl' | sudo tee /etc/sudoers.d/lldp")
+                self.logger.error("")
+                self.logger.error("For multiple users, you can use a group:")
+                self.logger.error("  %netadmin ALL=(ALL) NOPASSWD: /usr/bin/lldpctl")
+                self.logger.error("=" * 60)
+
             ssh.close()
             return []
 

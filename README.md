@@ -82,11 +82,26 @@ This creates `devices.json` with the following structure:
 #### Linux
 - Requires `lldpd` or `lldpad` package installed
 - LLDP daemon must be running
-- Command used: `lldpctl`
+- Commands used: `sudo lldpctl`, `sudo ethtool`
+- **IMPORTANT**: User must have sudo privileges for `lldpctl` and `ethtool`
+
+**Sudo Configuration** (required):
+Add to `/etc/sudoers.d/lldp`:
+```bash
+# Replace 'username' with your SSH username
+username ALL=(ALL) NOPASSWD: /usr/bin/lldpctl, /usr/sbin/ethtool
+```
+
+Or for a group:
+```bash
+%netadmin ALL=(ALL) NOPASSWD: /usr/bin/lldpctl, /usr/sbin/ethtool
+```
 
 #### MikroTik RouterOS
-- LLDP must be enabled on interfaces
-- Command used: `/interface lldp print detail`
+- IP neighbor discovery enabled (default)
+- Command used: `/ip neighbor print detail`
+- Works with LLDP, CDP, and MikroTik discovery protocols
+- No special configuration needed
 
 #### Arista EOS
 - LLDP enabled by default
@@ -104,7 +119,8 @@ This creates `devices.json` with the following structure:
 #### Proxmox Hosts
 - Requires `lldpd` package installed (typically included by default)
 - LLDP daemon must be running
-- Command used: `lldpctl`
+- Commands used: `sudo lldpctl`, `sudo ethtool`
+- **IMPORTANT**: User must have sudo privileges (same as Linux above)
 
 ## Usage
 
