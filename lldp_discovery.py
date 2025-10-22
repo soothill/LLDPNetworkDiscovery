@@ -102,14 +102,23 @@ class SSHConnection:
             self.logger.error(f"Error connecting to {self.device.hostname}: {e}")
             return False
 
-    def execute_command(self, command: str) -> Tuple[str, str, int]:
-        """Execute command on remote device"""
+    def execute_command(self, command: str, request_pty: bool = None) -> Tuple[str, str, int]:
+        """Execute command on remote device
+
+        Args:
+            command: Command to execute
+            request_pty: Whether to request a pseudo-TTY. If None, auto-detect based on command.
+        """
         if not self.client:
             return "", "Not connected", 1
 
+        # Auto-detect PTY requirement if not specified
+        if request_pty is None:
+            # Only request PTY for sudo commands (needed for Linux/Proxmox)
+            request_pty = 'sudo' in command
+
         try:
-            # Request a pseudo-TTY for sudo commands to work properly
-            stdin, stdout, stderr = self.client.exec_command(command, timeout=self.timeout, get_pty=True)
+            stdin, stdout, stderr = self.client.exec_command(command, timeout=self.timeout, get_pty=request_pty)
             exit_code = stdout.channel.recv_exit_status()
 
             # Read output
@@ -118,7 +127,7 @@ class SSHConnection:
 
             # When get_pty=True, stderr is redirected to stdout, so we need to handle this
             # If stderr is empty but command failed, the error is in stdout
-            if exit_code != 0 and not stderr_data and stdout_data:
+            if request_pty and exit_code != 0 and not stderr_data and stdout_data:
                 # Check if stdout contains error messages
                 if 'permission denied' in stdout_data.lower() or 'command not found' in stdout_data.lower():
                     stderr_data = stdout_data
@@ -729,7 +738,11 @@ class LLDPDiscovery:
         stdout, stderr, exit_code = ssh.execute_command(command)
 
         if exit_code != 0:
-            self.logger.error(f"LLDP command failed on {device.hostname}: {stderr}")
+            self.logger.error(f"LLDP command failed on {device.hostname}")
+            self.logger.error(f"  Command: {command}")
+            self.logger.error(f"  Exit code: {exit_code}")
+            self.logger.error(f"  Stderr: {stderr}")
+            self.logger.error(f"  Stdout: {stdout[:500]}")  # First 500 chars of stdout for context
 
             # Special handling for Linux/Proxmox sudo issues
             if device.device_type in ['linux', 'proxmox'] and ('sudo' in stderr.lower() or 'permission denied' in stderr.lower() or 'lldpctl' in stderr.lower()):
@@ -758,6 +771,9 @@ class LLDPDiscovery:
 
             ssh.close()
             return []
+
+        self.logger.debug(f"LLDP command succeeded on {device.hostname}")
+        self.logger.debug(f"  Output length: {len(stdout)} chars")
 
         # Parse output based on device type
         parsers = {
