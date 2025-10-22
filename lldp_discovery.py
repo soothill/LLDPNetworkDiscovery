@@ -1396,18 +1396,68 @@ class LLDPDiscovery:
     <div class="tooltip" id="tooltip"></div>
 
     <script>
+        const tooltip = document.getElementById('tooltip');
+
+        // Build connection map from topology data
+        const deviceConnections = {};
+'''
+
+        # Build JavaScript connection map from actual discovered neighbors
+        for neighbor in self.neighbors:
+            local_dev = neighbor.local_device
+            if local_dev not in [d.hostname for d in self.devices]:
+                continue
+
+            if 'deviceConnections' not in locals():
+                deviceConnections = defaultdict(list)
+
+            conn_info = {
+                'local': neighbor.local_port,
+                'remote': neighbor.remote_device,
+                'remotePort': neighbor.remote_port,
+                'speed': neighbor.local_port_speed or 'Unknown'
+            }
+
+            # Add to JavaScript
+            html_content += f'''
+        if (!deviceConnections['{local_dev}']) deviceConnections['{local_dev}'] = [];
+        deviceConnections['{local_dev}'].push({{
+            local: '{neighbor.local_port}',
+            remote: '{neighbor.remote_device}',
+            remotePort: '{neighbor.remote_port}',
+            speed: '{neighbor.local_port_speed or "Unknown"}'
+        }});'''
+
+        html_content += '''
+
         // Add interactivity
         document.querySelectorAll('.node').forEach(node => {
             node.addEventListener('mouseenter', (e) => {
                 const deviceName = e.currentTarget.getAttribute('data-device');
-                const tooltip = document.getElementById('tooltip');
-                tooltip.innerHTML = `<strong>${deviceName}</strong>`;
+                const connections = deviceConnections[deviceName] || [];
+
+                // Build connected interfaces list
+                let connectionsHTML = '';
+                if (connections.length > 0) {
+                    connectionsHTML = connections.map(conn =>
+                        `<div style="margin-left: 1rem; font-size: 0.85rem; color: rgba(226, 232, 240, 0.8); margin-top: 0.25rem;">
+                            ${conn.local} [${conn.speed}] → ${conn.remote}:${conn.remotePort}
+                        </div>`
+                    ).join('');
+                } else {
+                    connectionsHTML = '<div style="margin-left: 1rem; font-size: 0.85rem; color: rgba(226, 232, 240, 0.6);">No connections</div>';
+                }
+
+                tooltip.innerHTML = `
+                    <div style="font-weight: 600; margin-bottom: 0.5rem; font-size: 1.1rem;">${deviceName}</div>
+                    <div style="font-weight: 500; margin-bottom: 0.25rem;">Connections:</div>
+                    ${connectionsHTML}
+                `;
                 tooltip.classList.add('show');
             });
 
             node.addEventListener('mousemove', (e) => {
-                const tooltip = document.getElementById('tooltip');
-                const padding = 15;
+                const padding = 8;
 
                 // Get actual tooltip dimensions
                 const tooltipRect = tooltip.getBoundingClientRect();
@@ -1444,7 +1494,7 @@ class LLDPDiscovery:
             });
 
             node.addEventListener('mouseleave', () => {
-                document.getElementById('tooltip').classList.remove('show');
+                tooltip.classList.remove('show');
             });
         });
     </script>

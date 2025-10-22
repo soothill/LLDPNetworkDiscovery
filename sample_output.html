@@ -1020,77 +1020,65 @@
         const links = document.querySelectorAll('.link');
         const tooltip = document.getElementById('tooltip');
 
+        // Device connection map - maps device to its connected interfaces with remote info
+        const deviceConnections = {
+            'edge-router': [
+                { local: 'ether1', remote: 'core-sw-01', remotePort: 'Eth48', speed: '10G' },
+                { local: 'ether2', remote: 'core-sw-02', remotePort: 'Eth48', speed: '10G' }
+            ],
+            'core-sw-01': [
+                { local: 'Eth1', remote: 'core-sw-02', remotePort: 'Eth1', speed: '10G' },
+                { local: 'Eth48', remote: 'edge-router', remotePort: 'ether1', speed: '10G' },
+                { local: 'Eth10', remote: 'access-sw-01', remotePort: '1/1/1', speed: '10G' },
+                { local: 'Eth20', remote: 'proxmox-01', remotePort: 'vmbr0', speed: '10G' },
+                { local: 'Eth25', remote: 'ruijie-sw-01', remotePort: 'Gi0/24', speed: '10G' }
+            ],
+            'core-sw-02': [
+                { local: 'Eth1', remote: 'core-sw-01', remotePort: 'Eth1', speed: '10G' },
+                { local: 'Eth48', remote: 'edge-router', remotePort: 'ether2', speed: '10G' },
+                { local: 'Eth11', remote: 'access-sw-01', remotePort: '1/1/2', speed: '10G' },
+                { local: 'Eth21', remote: 'proxmox-02', remotePort: 'vmbr0', speed: '10G' }
+            ],
+            'access-sw-01': [
+                { local: '1/1/1', remote: 'core-sw-01', remotePort: 'Eth10', speed: '10G' },
+                { local: '1/1/2', remote: 'core-sw-02', remotePort: 'Eth11', speed: '10G' },
+                { local: '1/1/5', remote: 'ruijie-ap-01', remotePort: 'Gi0/1', speed: '1G' },
+                { local: '1/1/10', remote: 'linux-srv-01', remotePort: 'eth0', speed: '1G' },
+                { local: '1/1/11', remote: 'linux-srv-02', remotePort: 'eth0', speed: '1G' }
+            ],
+            'ruijie-sw-01': [
+                { local: 'Gi0/24', remote: 'core-sw-01', remotePort: 'Eth25', speed: '10G' },
+                { local: 'Gi0/1', remote: 'linux-srv-02', remotePort: 'eth1', speed: '1G' }
+            ],
+            'linux-srv-01': [
+                { local: 'eth0', remote: 'access-sw-01', remotePort: '1/1/10', speed: '1G' }
+            ],
+            'linux-srv-02': [
+                { local: 'eth0', remote: 'access-sw-01', remotePort: '1/1/11', speed: '1G' },
+                { local: 'eth1', remote: 'ruijie-sw-01', remotePort: 'Gi0/1', speed: '1G' }
+            ],
+            'ruijie-ap-01': [
+                { local: 'Gi0/1', remote: 'access-sw-01', remotePort: '1/1/5', speed: '1G' }
+            ],
+            'proxmox-01': [
+                { local: 'vmbr0', remote: 'core-sw-01', remotePort: 'Eth20', speed: '10G' }
+            ],
+            'proxmox-02': [
+                { local: 'vmbr0', remote: 'core-sw-02', remotePort: 'Eth21', speed: '10G' }
+            ]
+        };
+
         const deviceInfo = {
-            'edge-router': {
-                type: 'MikroTik RouterOS',
-                ip: '192.168.1.1',
-                interfaces: ['ether1', 'ether2', 'ether3'],
-                uptime: '45 days',
-                status: 'Active'
-            },
-            'core-sw-01': {
-                type: 'Arista EOS 4.28',
-                ip: '10.0.0.1',
-                interfaces: ['Eth1-48'],
-                uptime: '120 days',
-                status: 'Active'
-            },
-            'core-sw-02': {
-                type: 'Arista EOS 4.28',
-                ip: '10.0.0.2',
-                interfaces: ['Eth1-48'],
-                uptime: '118 days',
-                status: 'Active'
-            },
-            'access-sw-01': {
-                type: 'HP Aruba 2930F',
-                ip: '10.0.1.1',
-                interfaces: ['1/1/1-24'],
-                uptime: '89 days',
-                status: 'Active'
-            },
-            'ruijie-sw-01': {
-                type: 'Ruijie RG-S2910',
-                ip: '10.0.1.40',
-                interfaces: ['Gi0/1-24'],
-                uptime: '34 days',
-                status: 'Active'
-            },
-            'linux-srv-01': {
-                type: 'Ubuntu 22.04 LTS',
-                ip: '10.0.2.10',
-                interfaces: ['eth0'],
-                uptime: '67 days',
-                status: 'Active'
-            },
-            'linux-srv-02': {
-                type: 'Ubuntu 22.04 LTS',
-                ip: '10.0.2.11',
-                interfaces: ['eth0', 'eth1'],
-                uptime: '45 days',
-                status: 'Active'
-            },
-            'ruijie-ap-01': {
-                type: 'Ruijie RG-AP820-L',
-                ip: '10.0.3.10',
-                interfaces: ['Gi0/1', 'WLAN0'],
-                uptime: '23 days',
-                status: 'Active'
-            },
-            'proxmox-01': {
-                type: 'Proxmox VE 8.1',
-                ip: '10.0.4.10',
-                interfaces: ['vmbr0', 'enp1s0'],
-                uptime: '156 days',
-                status: 'Active'
-            },
-            'proxmox-02': {
-                type: 'Proxmox VE 8.1',
-                ip: '10.0.4.11',
-                interfaces: ['vmbr0', 'enp1s0'],
-                uptime: '143 days',
-                status: 'Active'
-            }
+            'edge-router': { type: 'MikroTik RouterOS', ip: '192.168.1.1', uptime: '45 days', status: 'Active' },
+            'core-sw-01': { type: 'Arista EOS 4.28', ip: '10.0.0.1', uptime: '120 days', status: 'Active' },
+            'core-sw-02': { type: 'Arista EOS 4.28', ip: '10.0.0.2', uptime: '118 days', status: 'Active' },
+            'access-sw-01': { type: 'HP Aruba 2930F', ip: '10.0.1.1', uptime: '89 days', status: 'Active' },
+            'ruijie-sw-01': { type: 'Ruijie RG-S2910', ip: '10.0.1.40', uptime: '34 days', status: 'Active' },
+            'linux-srv-01': { type: 'Ubuntu 22.04 LTS', ip: '10.0.2.10', uptime: '67 days', status: 'Active' },
+            'linux-srv-02': { type: 'Ubuntu 22.04 LTS', ip: '10.0.2.11', uptime: '45 days', status: 'Active' },
+            'ruijie-ap-01': { type: 'Ruijie RG-AP820-L', ip: '10.0.3.10', uptime: '23 days', status: 'Active' },
+            'proxmox-01': { type: 'Proxmox VE 8.1', ip: '10.0.4.10', uptime: '156 days', status: 'Active' },
+            'proxmox-02': { type: 'Proxmox VE 8.1', ip: '10.0.4.11', uptime: '143 days', status: 'Active' }
         };
 
         // Node interactions
@@ -1098,8 +1086,21 @@
             node.addEventListener('mouseenter', (e) => {
                 const deviceName = node.getAttribute('data-device');
                 const info = deviceInfo[deviceName];
+                const connections = deviceConnections[deviceName] || [];
 
                 if (info) {
+                    // Build connected interfaces list
+                    let interfacesHTML = '';
+                    if (connections.length > 0) {
+                        interfacesHTML = connections.map(conn =>
+                            `<div style="margin-left: 1rem; font-size: 0.85rem; color: rgba(226, 232, 240, 0.8);">
+                                ${conn.local} [${conn.speed}] → ${conn.remote}:${conn.remotePort}
+                            </div>`
+                        ).join('');
+                    } else {
+                        interfacesHTML = '<div style="margin-left: 1rem; font-size: 0.85rem; color: rgba(226, 232, 240, 0.6);">No connections</div>';
+                    }
+
                     tooltip.innerHTML = `
                         <div class="tooltip-title">${deviceName}</div>
                         <div class="tooltip-row">
@@ -1111,10 +1112,10 @@
                             <span class="tooltip-value">${info.ip}</span>
                         </div>
                         <div class="tooltip-row">
-                            <span class="tooltip-label">Interfaces:</span>
-                            <span class="tooltip-value">${info.interfaces.join(', ')}</span>
+                            <span class="tooltip-label">Connections:</span>
                         </div>
-                        <div class="tooltip-row">
+                        ${interfacesHTML}
+                        <div class="tooltip-row" style="margin-top: 0.5rem;">
                             <span class="tooltip-label">Uptime:</span>
                             <span class="tooltip-value">${info.uptime}</span>
                         </div>
@@ -1128,7 +1129,7 @@
             });
 
             node.addEventListener('mousemove', (e) => {
-                const padding = 15;
+                const padding = 8;
 
                 // Get actual tooltip dimensions
                 const tooltipRect = tooltip.getBoundingClientRect();
