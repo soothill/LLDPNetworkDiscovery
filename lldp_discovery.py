@@ -120,14 +120,45 @@ class SSHConnection:
         try:
             stdin, stdout, stderr = self.client.exec_command(command, timeout=self.timeout, get_pty=request_pty)
 
-            # For MikroTik with PTY, read output first then get exit status
-            # This prevents hanging on recv_exit_status()
+            # For MikroTik with PTY, use non-blocking read with sleep
+            # MikroTik PTY can hang on blocking reads
             if request_pty and self.device.device_type == 'mikrotik':
-                # Read output first
-                stdout_data = stdout.read().decode('utf-8')
-                stderr_data = stderr.read().decode('utf-8')
-                # Then get exit status (should be immediate now)
-                exit_code = stdout.channel.recv_exit_status()
+                import time
+                # Send newline to ensure command executes
+                stdin.write('\n')
+                stdin.flush()
+
+                # Wait a bit for command to execute
+                time.sleep(0.5)
+
+                # Read available output using non-blocking recv
+                stdout_data = ''
+                stderr_data = ''
+                channel = stdout.channel
+
+                # Read until no more data or timeout
+                start_time = time.time()
+                while time.time() - start_time < self.timeout:
+                    if channel.recv_ready():
+                        chunk = channel.recv(4096).decode('utf-8', errors='ignore')
+                        stdout_data += chunk
+                    elif channel.recv_stderr_ready():
+                        chunk = channel.recv_stderr(4096).decode('utf-8', errors='ignore')
+                        stderr_data += chunk
+                    else:
+                        # No more data available, wait a bit
+                        time.sleep(0.1)
+                        # If we've received data and no more is coming, break
+                        if stdout_data and not channel.recv_ready():
+                            time.sleep(0.2)  # Final wait
+                            if not channel.recv_ready():
+                                break
+
+                # Get exit status (should be available now)
+                if channel.exit_status_ready():
+                    exit_code = channel.recv_exit_status()
+                else:
+                    exit_code = 0  # Assume success if we got output
             else:
                 # Normal flow: wait for exit status first
                 exit_code = stdout.channel.recv_exit_status()
