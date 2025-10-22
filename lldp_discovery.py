@@ -114,21 +114,33 @@ class SSHConnection:
                     # Store original values
                     original_preferred_keys = transport_module.Transport._preferred_keys
                     original_preferred_kex = transport_module.Transport._preferred_kex
+                    original_key_info = transport_module.Transport._key_info.copy()
 
                     try:
-                        # Add legacy algorithms temporarily
-                        transport_module.Transport._preferred_keys = (
+                        # Build list of available host key algorithms
+                        available_keys = [
+                            'rsa-sha2-512',
+                            'rsa-sha2-256',
+                            'ssh-rsa',  # Legacy - needed for older devices
                             'ssh-ed25519',
                             'ecdsa-sha2-nistp256',
                             'ecdsa-sha2-nistp384',
                             'ecdsa-sha2-nistp521',
-                            'rsa-sha2-512',
-                            'rsa-sha2-256',
-                            'ssh-rsa',  # Legacy
-                            'ssh-dss',  # Legacy
-                        )
+                        ]
 
-                        transport_module.Transport._preferred_kex = (
+                        # Only add ssh-dss if it's supported (removed in newer paramiko)
+                        if 'ssh-dss' in original_key_info:
+                            available_keys.append('ssh-dss')
+
+                        # Ensure ssh-rsa is in the _key_info dict (re-enable if disabled)
+                        if 'ssh-rsa' not in transport_module.Transport._key_info and 'rsa-sha2-256' in transport_module.Transport._key_info:
+                            # Copy the RSA handler from rsa-sha2-256
+                            transport_module.Transport._key_info['ssh-rsa'] = transport_module.Transport._key_info['rsa-sha2-256']
+
+                        transport_module.Transport._preferred_keys = tuple(available_keys)
+
+                        # Build list of available KEX algorithms
+                        available_kex = [
                             'ecdh-sha2-nistp256',
                             'ecdh-sha2-nistp384',
                             'ecdh-sha2-nistp521',
@@ -137,8 +149,16 @@ class SSHConnection:
                             'diffie-hellman-group14-sha256',
                             'diffie-hellman-group-exchange-sha1',  # Legacy
                             'diffie-hellman-group14-sha1',  # Legacy
-                            'diffie-hellman-group1-sha1',  # Legacy
-                        )
+                        ]
+
+                        # Only add group1-sha1 if available (very old, often removed)
+                        try:
+                            from paramiko.kex_group1 import KexGroup1
+                            available_kex.append('diffie-hellman-group1-sha1')
+                        except ImportError:
+                            pass
+
+                        transport_module.Transport._preferred_kex = tuple(available_kex)
 
                         # Retry connection with legacy algorithms
                         self.client.connect(**connect_params)
