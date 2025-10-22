@@ -779,7 +779,9 @@ class LLDPDiscovery:
             ssh.close()
             return []
 
-        stdout, stderr, exit_code = ssh.execute_command(command)
+        # MikroTik needs PTY to show all columns in table output
+        request_pty = device.device_type == 'mikrotik'
+        stdout, stderr, exit_code = ssh.execute_command(command, request_pty=request_pty)
 
         if exit_code != 0:
             self.logger.error(f"LLDP command failed on {device.hostname}")
