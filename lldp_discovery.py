@@ -1124,13 +1124,22 @@ class LLDPDiscovery:
         for device in self.devices:
             device_type_counts[device.device_type] += 1
 
-        # Build device info for tooltips
+        # Build device info for tooltips (configured devices have full info)
         device_info = {}
         for device in self.devices:
             device_info[device.hostname] = {
                 'type': device.device_type,
                 'ip': device.ip_address
             }
+
+        # Add discovered devices with minimal info
+        for neighbor in self.neighbors:
+            for device_name in [neighbor.local_device, neighbor.remote_device]:
+                if device_name not in device_info:
+                    device_info[device_name] = {
+                        'type': 'discovered',
+                        'ip': 'Not configured'
+                    }
 
         # Build connection list with speeds - include ALL physical links
         connections = []
@@ -1566,17 +1575,29 @@ class LLDPDiscovery:
                     <g id="links">
 '''
 
+        # Collect all unique devices (configured + discovered via LLDP)
+        all_device_names = set()
+        for device in self.devices:
+            all_device_names.add(device.hostname)
+        for neighbor in self.neighbors:
+            all_device_names.add(neighbor.local_device)
+            all_device_names.add(neighbor.remote_device)
+
+        all_devices_sorted = sorted(all_device_names)
+        num_devices = len(all_devices_sorted)
+
+        self.logger.info(f"HTML: Displaying {num_devices} devices ({len(self.devices)} configured, {num_devices - len(self.devices)} discovered)")
+
         # Simple circular layout for nodes
-        num_devices = len(self.devices)
         center_x, center_y = 500, 400
         radius = 300
         device_positions = {}
 
-        for i, device in enumerate(sorted(self.devices, key=lambda d: d.hostname)):
+        for i, device_name in enumerate(all_devices_sorted):
             angle = (2 * 3.14159 * i) / num_devices - (3.14159 / 2)  # Start from top
             x = center_x + radius * cos(angle)
             y = center_y + radius * sin(angle)
-            device_positions[device.hostname] = (x, y)
+            device_positions[device_name] = (x, y)
 
         # Draw links
         for conn in connections:
@@ -1600,15 +1621,19 @@ class LLDPDiscovery:
                     <g id="nodes">
 '''
 
-        # Draw nodes
-        for device in sorted(self.devices, key=lambda d: d.hostname):
-            if device.hostname in device_positions:
-                x, y = device_positions[device.hostname]
-                color = device_colors.get(device.device_type, '#95a5a6')
+        # Draw nodes - all discovered devices
+        # Build device type lookup for coloring
+        device_type_lookup = {device.hostname: device.device_type for device in self.devices}
 
-                html_content += f'''                        <g class="node" data-device="{device.hostname}">
+        for device_name in all_devices_sorted:
+            x, y = device_positions[device_name]
+            # Get device type from config, or default to 'unknown' for discovered devices
+            device_type = device_type_lookup.get(device_name, 'unknown')
+            color = device_colors.get(device_type, '#95a5a6')
+
+            html_content += f'''                        <g class="node" data-device="{device_name}">
                             <circle cx="{x}" cy="{y}" r="40" fill="{color}" filter="url(#glow)"/>
-                            <text x="{x}" y="{y + 5}">{device.hostname[:12]}</text>
+                            <text x="{x}" y="{y + 5}">{device_name[:12]}</text>
                         </g>
 '''
 
@@ -1630,8 +1655,6 @@ class LLDPDiscovery:
         # Build JavaScript connection map from actual discovered neighbors
         for neighbor in self.neighbors:
             local_dev = neighbor.local_device
-            if local_dev not in [d.hostname for d in self.devices]:
-                continue
 
             if 'deviceConnections' not in locals():
                 deviceConnections = defaultdict(list)
