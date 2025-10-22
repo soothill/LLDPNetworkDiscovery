@@ -280,11 +280,12 @@
         .speed-legend-item {
             display: flex;
             align-items: center;
-            padding: 0.75rem 1rem;
+            padding: 0.5rem 0.75rem;
             background: rgba(255, 255, 255, 0.03);
-            border-radius: 8px;
-            margin-bottom: 0.5rem;
+            border-radius: 6px;
+            margin-bottom: 0.4rem;
             transition: all 0.3s ease;
+            gap: 0.5rem;
         }
 
         .speed-legend-item:last-child {
@@ -296,9 +297,14 @@
             transform: translateX(4px);
         }
 
+        .speed-legend-item svg {
+            flex-shrink: 0;
+        }
+
         .speed-legend-item span {
-            font-size: 0.9rem;
+            font-size: 0.85rem;
             font-weight: 500;
+            white-space: nowrap;
         }
 
         /* Stats Cards */
@@ -750,32 +756,32 @@
                     </div>
                     <div class="legend-items">
                         <div class="speed-legend-item">
-                            <svg width="40" height="4" style="margin-right: 8px;">
-                                <line class="link speed-1g" x1="0" y1="2" x2="40" y2="2" />
+                            <svg width="30" height="3">
+                                <line class="link speed-1g" x1="0" y1="1.5" x2="30" y2="1.5" />
                             </svg>
                             <span style="color: rgba(96, 165, 250, 0.9);">1 Gbps</span>
                         </div>
                         <div class="speed-legend-item">
-                            <svg width="40" height="6" style="margin-right: 8px;">
-                                <line class="link speed-10g" x1="0" y1="3" x2="40" y2="3" />
+                            <svg width="30" height="4">
+                                <line class="link speed-10g" x1="0" y1="2" x2="30" y2="2" />
                             </svg>
                             <span style="color: rgba(52, 211, 153, 0.9);">10 Gbps</span>
                         </div>
                         <div class="speed-legend-item">
-                            <svg width="40" height="8" style="margin-right: 8px;">
-                                <line class="link speed-40g" x1="0" y1="4" x2="40" y2="4" />
+                            <svg width="30" height="5">
+                                <line class="link speed-40g" x1="0" y1="2.5" x2="30" y2="2.5" />
                             </svg>
                             <span style="color: rgba(251, 191, 36, 0.9);">40 Gbps</span>
                         </div>
                         <div class="speed-legend-item">
-                            <svg width="40" height="10" style="margin-right: 8px;">
-                                <line class="link speed-100g" x1="0" y1="5" x2="40" y2="5" />
+                            <svg width="30" height="6">
+                                <line class="link speed-100g" x1="0" y1="3" x2="30" y2="3" />
                             </svg>
                             <span style="color: rgba(249, 115, 22, 0.9);">100 Gbps</span>
                         </div>
                         <div class="speed-legend-item">
-                            <svg width="40" height="12" style="margin-right: 8px;">
-                                <line class="link speed-400g" x1="0" y1="6" x2="40" y2="6" />
+                            <svg width="30" height="7">
+                                <line class="link speed-400g" x1="0" y1="3.5" x2="30" y2="3.5" />
                             </svg>
                             <span style="color: rgba(239, 68, 68, 0.9);">400 Gbps</span>
                         </div>

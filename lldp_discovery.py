@@ -16,6 +16,7 @@ from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass, asdict
 from collections import defaultdict
 import logging
+from math import cos, sin
 
 # For graphical output
 try:
@@ -866,6 +867,538 @@ class LLDPDiscovery:
 
         self.logger.info("\n" + "=" * 60)
 
+    def _get_speed_class(self, speed_str: Optional[str]) -> str:
+        """Determine CSS class based on speed string"""
+        if not speed_str or speed_str == "Unknown":
+            return ""
+
+        # Extract numeric value
+        if "400G" in speed_str:
+            return "speed-400g"
+        elif "100G" in speed_str:
+            return "speed-100g"
+        elif "40G" in speed_str:
+            return "speed-40g"
+        elif "10G" in speed_str:
+            return "speed-10g"
+        elif "G" in speed_str:
+            return "speed-1g"
+        else:
+            return ""
+
+    def generate_html_visualization(self, output_file: str = 'network_topology.html'):
+        """Generate interactive HTML visualization of network topology"""
+        if not self.neighbors:
+            self.logger.error("No topology data to visualize")
+            return
+
+        # Gather device statistics
+        device_type_counts = defaultdict(int)
+        for device in self.devices:
+            device_type_counts[device.device_type] += 1
+
+        # Build device info for tooltips
+        device_info = {}
+        for device in self.devices:
+            device_info[device.hostname] = {
+                'type': device.device_type,
+                'ip': device.ip_address
+            }
+
+        # Build connection list with speeds
+        connections = []
+        processed_pairs = set()
+        for neighbor in self.neighbors:
+            pair = tuple(sorted([neighbor.local_device, neighbor.remote_device]))
+            if pair not in processed_pairs:
+                speed_local = f" [{neighbor.local_port_speed}]" if neighbor.local_port_speed else ""
+                speed_remote = f" [{neighbor.remote_port_speed}]" if neighbor.remote_port_speed else ""
+                connections.append({
+                    'local_device': neighbor.local_device,
+                    'local_port': neighbor.local_port,
+                    'remote_device': neighbor.remote_device,
+                    'remote_port': neighbor.remote_port,
+                    'local_speed': neighbor.local_port_speed,
+                    'remote_speed': neighbor.remote_port_speed,
+                    'speed_class': self._get_speed_class(neighbor.local_port_speed)
+                })
+                processed_pairs.add(pair)
+
+        # Generate HTML
+        html_content = f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLDP Network Topology</title>
+    <style>
+        * {{
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }}
+
+        body {{
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            color: #e2e8f0;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }}
+
+        .container {{
+            display: flex;
+            height: 100vh;
+        }}
+
+        .sidebar {{
+            width: 320px;
+            background: rgba(15, 23, 42, 0.8);
+            backdrop-filter: blur(20px);
+            border-right: 1px solid rgba(148, 163, 184, 0.1);
+            padding: 2rem;
+            overflow-y: auto;
+        }}
+
+        .header {{
+            margin-bottom: 2rem;
+        }}
+
+        h1 {{
+            font-size: 1.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #60a5fa 0%, #a78bfa 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.5rem;
+        }}
+
+        .subtitle {{
+            color: #94a3b8;
+            font-size: 0.875rem;
+        }}
+
+        .card {{
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(148, 163, 184, 0.1);
+            border-radius: 12px;
+            padding: 1.25rem;
+            margin-bottom: 1.5rem;
+        }}
+
+        .card-header {{
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+        }}
+
+        .card-icon {{
+            font-size: 1.25rem;
+        }}
+
+        .card-title {{
+            font-size: 1rem;
+            font-weight: 600;
+        }}
+
+        .legend-items {{
+            display: flex;
+            flex-direction: column;
+            gap: 0.625rem;
+        }}
+
+        .legend-item {{
+            display: flex;
+            align-items: center;
+            gap: 0.875rem;
+            padding: 0.75rem;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }}
+
+        .legend-item:hover {{
+            background: rgba(255, 255, 255, 0.08);
+            transform: translateX(4px);
+        }}
+
+        .legend-color {{
+            width: 36px;
+            height: 36px;
+            border-radius: 10px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }}
+
+        .legend-info {{
+            flex: 1;
+        }}
+
+        .legend-label {{
+            font-weight: 500;
+            color: #fff;
+            font-size: 0.95rem;
+        }}
+
+        .legend-count {{
+            font-size: 0.8rem;
+            opacity: 0.6;
+            margin-top: 0.125rem;
+        }}
+
+        .speed-legend-item {{
+            display: flex;
+            align-items: center;
+            padding: 0.5rem 0.75rem;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 6px;
+            margin-bottom: 0.4rem;
+            transition: all 0.3s ease;
+            gap: 0.5rem;
+        }}
+
+        .speed-legend-item:last-child {{
+            margin-bottom: 0;
+        }}
+
+        .speed-legend-item:hover {{
+            background: rgba(255, 255, 255, 0.08);
+            transform: translateX(4px);
+        }}
+
+        .speed-legend-item svg {{
+            flex-shrink: 0;
+        }}
+
+        .speed-legend-item span {{
+            font-size: 0.85rem;
+            font-weight: 500;
+            white-space: nowrap;
+        }}
+
+        .connection-list {{
+            max-height: 400px;
+            overflow-y: auto;
+        }}
+
+        .connection-item {{
+            padding: 0.75rem;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 6px;
+            margin-bottom: 0.5rem;
+            font-size: 0.85rem;
+            font-family: 'Monaco', 'Menlo', monospace;
+        }}
+
+        .main-content {{
+            flex: 1;
+            padding: 2rem;
+            overflow: hidden;
+        }}
+
+        .topology-container {{
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(148, 163, 184, 0.1);
+            border-radius: 16px;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }}
+
+        svg {{
+            max-width: 100%;
+            max-height: 100%;
+        }}
+
+        .node {{
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }}
+
+        .node:hover {{
+            filter: brightness(1.2);
+        }}
+
+        .node circle {{
+            filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.4));
+        }}
+
+        .node text {{
+            fill: #fff;
+            font-weight: 600;
+            font-size: 14px;
+            text-anchor: middle;
+            pointer-events: none;
+        }}
+
+        .link {{
+            stroke: rgba(148, 163, 184, 0.4);
+            stroke-width: 2;
+            transition: all 0.3s ease;
+        }}
+
+        .link.speed-1g {{
+            stroke: rgba(96, 165, 250, 0.5);
+            stroke-width: 2;
+        }}
+
+        .link.speed-10g {{
+            stroke: rgba(52, 211, 153, 0.6);
+            stroke-width: 3;
+        }}
+
+        .link.speed-40g {{
+            stroke: rgba(251, 191, 36, 0.7);
+            stroke-width: 4;
+        }}
+
+        .link.speed-100g {{
+            stroke: rgba(249, 115, 22, 0.8);
+            stroke-width: 5;
+        }}
+
+        .link.speed-400g {{
+            stroke: rgba(239, 68, 68, 0.9);
+            stroke-width: 6;
+            filter: drop-shadow(0 0 8px rgba(239, 68, 68, 0.5));
+        }}
+
+        .port-label {{
+            fill: #94a3b8;
+            font-size: 11px;
+            text-anchor: middle;
+        }}
+
+        .tooltip {{
+            position: absolute;
+            background: rgba(15, 23, 42, 0.95);
+            border: 1px solid rgba(148, 163, 184, 0.2);
+            padding: 1rem;
+            border-radius: 8px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s;
+            z-index: 1000;
+        }}
+
+        .tooltip.show {{
+            opacity: 1;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="sidebar">
+            <div class="header">
+                <h1>Network Topology</h1>
+                <p class="subtitle">LLDP Discovery Results</p>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-icon">🖥️</div>
+                    <h3 class="card-title">Device Types</h3>
+                </div>
+                <div class="legend-items">
+'''
+
+        # Add device type legend items
+        device_colors = {
+            'linux': '#3498db',
+            'mikrotik': '#e74c3c',
+            'arista': '#2ecc71',
+            'aruba': '#f39c12',
+            'ruijie': '#9b59b6',
+            'proxmox': '#1abc9c'
+        }
+
+        device_labels = {
+            'linux': 'Linux',
+            'mikrotik': 'MikroTik',
+            'arista': 'Arista EOS',
+            'aruba': 'HP Aruba',
+            'ruijie': 'Ruijie',
+            'proxmox': 'Proxmox VE'
+        }
+
+        for dtype, count in sorted(device_type_counts.items()):
+            color = device_colors.get(dtype, '#95a5a6')
+            label = device_labels.get(dtype, dtype.title())
+            device_word = "device" if count == 1 else "devices"
+            html_content += f'''                    <div class="legend-item" data-type="{dtype}">
+                        <div class="legend-color" style="background: {color};"></div>
+                        <div class="legend-info">
+                            <div class="legend-label">{label}</div>
+                            <div class="legend-count">{count} {device_word}</div>
+                        </div>
+                    </div>
+'''
+
+        html_content += '''                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-icon">⚡</div>
+                    <h3 class="card-title">Link Speeds</h3>
+                </div>
+                <div class="legend-items">
+                    <div class="speed-legend-item">
+                        <svg width="30" height="3">
+                            <line class="link speed-1g" x1="0" y1="1.5" x2="30" y2="1.5" />
+                        </svg>
+                        <span style="color: rgba(96, 165, 250, 0.9);">1 Gbps</span>
+                    </div>
+                    <div class="speed-legend-item">
+                        <svg width="30" height="4">
+                            <line class="link speed-10g" x1="0" y1="2" x2="30" y2="2" />
+                        </svg>
+                        <span style="color: rgba(52, 211, 153, 0.9);">10 Gbps</span>
+                    </div>
+                    <div class="speed-legend-item">
+                        <svg width="30" height="5">
+                            <line class="link speed-40g" x1="0" y1="2.5" x2="30" y2="2.5" />
+                        </svg>
+                        <span style="color: rgba(251, 191, 36, 0.9);">40 Gbps</span>
+                    </div>
+                    <div class="speed-legend-item">
+                        <svg width="30" height="6">
+                            <line class="link speed-100g" x1="0" y1="3" x2="30" y2="3" />
+                        </svg>
+                        <span style="color: rgba(249, 115, 22, 0.9);">100 Gbps</span>
+                    </div>
+                    <div class="speed-legend-item">
+                        <svg width="30" height="7">
+                            <line class="link speed-400g" x1="0" y1="3.5" x2="30" y2="3.5" />
+                        </svg>
+                        <span style="color: rgba(239, 68, 68, 0.9);">400 Gbps</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-icon">🔌</div>
+                    <h3 class="card-title">Connections</h3>
+                </div>
+                <div class="connection-list">
+'''
+
+        # Add connection items
+        for conn in connections:
+            speed_local = f" [{conn['local_speed']}]" if conn['local_speed'] else ""
+            speed_remote = f" [{conn['remote_speed']}]" if conn['remote_speed'] else ""
+            html_content += f'''                    <div class="connection-item">{conn['local_device']}:{conn['local_port']}{speed_local} ↔ {conn['remote_device']}:{conn['remote_port']}{speed_remote}</div>
+'''
+
+        html_content += '''                </div>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="topology-container">
+                <svg width="1000" height="800" viewBox="0 0 1000 800">
+                    <defs>
+                        <filter id="glow">
+                            <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
+                            <feMerge>
+                                <feMergeNode in="coloredBlur"/>
+                                <feMergeNode in="SourceGraphic"/>
+                            </feMerge>
+                        </filter>
+                    </defs>
+
+                    <g id="links">
+'''
+
+        # Simple circular layout for nodes
+        num_devices = len(self.devices)
+        center_x, center_y = 500, 400
+        radius = 300
+        device_positions = {}
+
+        for i, device in enumerate(sorted(self.devices, key=lambda d: d.hostname)):
+            angle = (2 * 3.14159 * i) / num_devices - (3.14159 / 2)  # Start from top
+            x = center_x + radius * cos(angle)
+            y = center_y + radius * sin(angle)
+            device_positions[device.hostname] = (x, y)
+
+        # Draw links
+        for conn in connections:
+            if conn['local_device'] in device_positions and conn['remote_device'] in device_positions:
+                x1, y1 = device_positions[conn['local_device']]
+                x2, y2 = device_positions[conn['remote_device']]
+                speed_class = conn['speed_class']
+
+                html_content += f'''                        <line class="link {speed_class}" x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}"/>
+'''
+
+                # Add port labels at midpoint
+                mid_x = (x1 + x2) / 2
+                mid_y = (y1 + y2) / 2
+                speed_label = f" [{conn['local_speed']}]" if conn['local_speed'] else ""
+                html_content += f'''                        <text class="port-label" x="{mid_x}" y="{mid_y - 5}">{conn['local_port']}{speed_label}</text>
+'''
+
+        html_content += '''                    </g>
+
+                    <g id="nodes">
+'''
+
+        # Draw nodes
+        for device in sorted(self.devices, key=lambda d: d.hostname):
+            if device.hostname in device_positions:
+                x, y = device_positions[device.hostname]
+                color = device_colors.get(device.device_type, '#95a5a6')
+
+                html_content += f'''                        <g class="node" data-device="{device.hostname}">
+                            <circle cx="{x}" cy="{y}" r="40" fill="{color}" filter="url(#glow)"/>
+                            <text x="{x}" y="{y + 5}">{device.hostname[:12]}</text>
+                        </g>
+'''
+
+        html_content += '''                    </g>
+                </svg>
+            </div>
+        </div>
+    </div>
+
+    <div class="tooltip" id="tooltip"></div>
+
+    <script>
+        // Add interactivity
+        document.querySelectorAll('.node').forEach(node => {
+            node.addEventListener('mouseenter', (e) => {
+                const deviceName = e.currentTarget.getAttribute('data-device');
+                const tooltip = document.getElementById('tooltip');
+                tooltip.innerHTML = `<strong>${deviceName}</strong>`;
+                tooltip.classList.add('show');
+            });
+
+            node.addEventListener('mousemove', (e) => {
+                const tooltip = document.getElementById('tooltip');
+                tooltip.style.left = e.pageX + 10 + 'px';
+                tooltip.style.top = e.pageY + 10 + 'px';
+            });
+
+            node.addEventListener('mouseleave', () => {
+                document.getElementById('tooltip').classList.remove('show');
+            });
+        });
+    </script>
+</body>
+</html>
+'''
+
+        # Write to file
+        with open(output_file, 'w') as f:
+            f.write(html_content)
+
+        self.logger.info(f"Interactive HTML visualization saved to {output_file}")
+
 
 def create_sample_config(filename: str = 'devices.json'):
     """Create a sample configuration file"""
@@ -968,6 +1501,8 @@ Examples:
                        help='Output file for network visualization (default: network_topology.png)')
     parser.add_argument('--no-graph', action='store_true',
                        help='Skip generating graphical visualization')
+    parser.add_argument('--html', default=None,
+                       help='Generate interactive HTML visualization (e.g., --html topology.html)')
     parser.add_argument('--verbose', '-v', action='store_true',
                        help='Enable verbose logging')
 
@@ -1016,6 +1551,10 @@ Examples:
     # Generate visualization
     if not args.no_graph:
         discovery.visualize_topology(args.graph)
+
+    # Generate HTML visualization if requested
+    if args.html:
+        discovery.generate_html_visualization(args.html)
 
     return 0
 
