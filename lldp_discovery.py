@@ -389,56 +389,57 @@ class LLDPParser:
 
     @staticmethod
     def parse_mikrotik(output: str, hostname: str) -> List[LLDPNeighbor]:
-        """Parse LLDP output from MikroTik using /ip neighbor print detail"""
+        """Parse LLDP output from MikroTik using /ip neighbor print
+
+        Expected format:
+        Columns: INTERFACE, ADDRESS, MAC-ADDRESS, IDENTITY, VERSION
+         #  INTERFACE      ADDRESS        MAC-ADDRESS        IDENTITY           VERSION
+         0  ether1         10.10.201.5    94:F1:28:8A:93:A1  2930F-48
+            bridge
+        """
         neighbors = []
-
-        # Parse MikroTik /ip neighbor print detail output
-        # This shows IP neighbor discovery info (includes LLDP/CDP data)
         lines = output.split('\n')
-        current_neighbor = {}
 
-        for line in lines:
-            line = line.strip()
+        # Find the line with column headers
+        header_line_idx = -1
+        for i, line in enumerate(lines):
+            if 'INTERFACE' in line and 'IDENTITY' in line:
+                header_line_idx = i
+                break
 
-            # Skip empty lines and header
-            if not line or line.startswith('Flags:'):
+        if header_line_idx == -1:
+            return neighbors
+
+        # Process data lines (skip header and column definition lines)
+        current_interface = None
+        current_identity = None
+
+        for i in range(header_line_idx + 1, len(lines)):
+            line = lines[i]
+
+            # Skip empty lines
+            if not line.strip():
                 continue
 
-            # New entry starts with a number or when we see "interface:" after data
-            if re.match(r'^\d+\s', line) or (line.startswith('interface:') and current_neighbor):
-                # Save previous neighbor if it has required fields
-                if current_neighbor.get('interface') and current_neighbor.get('identity'):
-                    # Extract interface name (could be in format "interface: ether1" or just "ether1")
-                    interface = current_neighbor.get('interface', '').strip()
+            # Check if this is a numbered entry (starts with number and space)
+            # Format: " 0  ether1         10.10.201.5    94:F1:28:8A:93:A1  2930F-48"
+            match = re.match(r'^\s*\d+\s+(\S+)\s+.*?([A-Za-z0-9][\w\-\.]+)\s*$', line)
+            if match:
+                interface = match.group(1)
+                identity = match.group(2)
 
-                    neighbors.append(LLDPNeighbor(
-                        local_device=hostname,
-                        local_port=interface,
-                        remote_device=current_neighbor.get('identity', ''),
-                        remote_port=current_neighbor.get('interface-name', current_neighbor.get('interface', '')),
-                        remote_description=current_neighbor.get('platform', '')
-                    ))
-                current_neighbor = {}
-
-            # Parse key-value pairs
-            if ':' in line:
-                parts = line.split(':', 1)
-                if len(parts) == 2:
-                    key = parts[0].strip().lower()
-                    value = parts[1].strip()
-                    current_neighbor[key] = value
-
-        # Add last neighbor
-        if current_neighbor.get('interface') and current_neighbor.get('identity'):
-            interface = current_neighbor.get('interface', '').strip()
-
-            neighbors.append(LLDPNeighbor(
-                local_device=hostname,
-                local_port=interface,
-                remote_device=current_neighbor.get('identity', ''),
-                remote_port=current_neighbor.get('interface-name', current_neighbor.get('interface', '')),
-                remote_description=current_neighbor.get('platform', '')
-            ))
+                # Only add if we have valid physical interface (not vlan, bridge, etc)
+                # and a non-IP identity
+                if interface and identity and not re.match(r'^\d+\.', identity):
+                    # Filter out virtual interfaces
+                    if not any(x in interface.lower() for x in ['vlan', 'bridge.']):
+                        neighbors.append(LLDPNeighbor(
+                            local_device=hostname,
+                            local_port=interface,
+                            remote_device=identity,
+                            remote_port='',  # Not available in this format
+                            remote_description=''
+                        ))
 
         return neighbors
 
@@ -722,7 +723,7 @@ class LLDPDiscovery:
         # Device-specific LLDP commands
         lldp_commands = {
             'linux': 'sudo lldpctl',
-            'mikrotik': '/ip neighbor print detail',
+            'mikrotik': '/ip neighbor print without-paging',
             'arista': 'show lldp neighbors detail',
             'aruba': 'show lldp neighbors detail',
             'ruijie': 'show lldp neighbors detail',
