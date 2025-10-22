@@ -36,6 +36,8 @@ class LLDPNeighbor:
     remote_device: str
     remote_port: str
     remote_description: Optional[str] = None
+    local_port_speed: Optional[str] = None
+    remote_port_speed: Optional[str] = None
 
     def __hash__(self):
         return hash((self.local_device, self.local_port, self.remote_device, self.remote_port))
@@ -117,6 +119,178 @@ class SSHConnection:
         if self.client:
             self.client.close()
             self.logger.debug(f"Closed connection to {self.device.hostname}")
+
+
+class PortSpeedDetector:
+    """Detects port speeds for different device types"""
+
+    @staticmethod
+    def get_port_speeds_linux(ssh: SSHConnection, ports: List[str]) -> Dict[str, str]:
+        """Get port speeds for Linux interfaces using ethtool"""
+        speeds = {}
+        for port in ports:
+            # Try ethtool first
+            stdout, stderr, exit_code = ssh.execute_command(f"ethtool {port} 2>/dev/null | grep -i speed")
+            if exit_code == 0 and stdout:
+                # Parse "Speed: 1000Mb/s" or "Speed: 10000Mb/s"
+                match = re.search(r'Speed:\s*(\d+)Mb/s', stdout, re.IGNORECASE)
+                if match:
+                    speed_mbps = int(match.group(1))
+                    speeds[port] = PortSpeedDetector._format_speed(speed_mbps)
+                    continue
+
+            # Fallback: try /sys/class/net
+            stdout, stderr, exit_code = ssh.execute_command(f"cat /sys/class/net/{port}/speed 2>/dev/null")
+            if exit_code == 0 and stdout.strip().isdigit():
+                speed_mbps = int(stdout.strip())
+                if speed_mbps > 0:
+                    speeds[port] = PortSpeedDetector._format_speed(speed_mbps)
+                    continue
+
+            speeds[port] = "Unknown"
+
+        return speeds
+
+    @staticmethod
+    def get_port_speeds_mikrotik(ssh: SSHConnection, ports: List[str]) -> Dict[str, str]:
+        """Get port speeds for MikroTik interfaces"""
+        speeds = {}
+        stdout, stderr, exit_code = ssh.execute_command('/interface print detail without-paging')
+
+        if exit_code == 0:
+            current_interface = None
+            for line in stdout.split('\n'):
+                line = line.strip()
+
+                # Match interface name
+                name_match = re.search(r'name="?([^"\s]+)"?', line)
+                if name_match:
+                    current_interface = name_match.group(1)
+
+                # Match running speed
+                if current_interface and 'running=' in line:
+                    speed_match = re.search(r'running=(\S+)', line)
+                    if speed_match and current_interface in ports:
+                        running = speed_match.group(1).lower()
+                        if 'yes' in running or 'true' in running:
+                            # Get actual rate
+                            rate_match = re.search(r'rate=(\S+)', line)
+                            if rate_match:
+                                speeds[current_interface] = rate_match.group(1)
+                            else:
+                                speeds[current_interface] = "Link Up"
+
+        # Fill in unknowns
+        for port in ports:
+            if port not in speeds:
+                speeds[port] = "Unknown"
+
+        return speeds
+
+    @staticmethod
+    def get_port_speeds_arista(ssh: SSHConnection, ports: List[str]) -> Dict[str, str]:
+        """Get port speeds for Arista EOS interfaces"""
+        speeds = {}
+        stdout, stderr, exit_code = ssh.execute_command('show interfaces status')
+
+        if exit_code == 0:
+            for line in stdout.split('\n'):
+                # Parse output like: "Et1    connected    1        full    1G     1000baseT"
+                parts = line.split()
+                if len(parts) >= 6:
+                    interface = parts[0]
+                    # Match any port in our list
+                    for port in ports:
+                        if port in interface or interface in port:
+                            speed = parts[5]  # Speed column
+                            speeds[port] = speed
+                            break
+
+        # Fill in unknowns
+        for port in ports:
+            if port not in speeds:
+                speeds[port] = "Unknown"
+
+        return speeds
+
+    @staticmethod
+    def get_port_speeds_aruba(ssh: SSHConnection, ports: List[str]) -> Dict[str, str]:
+        """Get port speeds for HP Aruba interfaces"""
+        speeds = {}
+        stdout, stderr, exit_code = ssh.execute_command('show interfaces brief')
+
+        if exit_code == 0:
+            for line in stdout.split('\n'):
+                # Parse Aruba output
+                parts = line.split()
+                if len(parts) >= 3:
+                    port_name = parts[0]
+                    for port in ports:
+                        if port in port_name or port_name in port:
+                            # Speed is usually in format like "1000FDx" or "10GigFD"
+                            if 'Up' in line:
+                                speed_match = re.search(r'(\d+(?:G|M)?(?:ig)?(?:FD|HD|x)?)', line)
+                                if speed_match:
+                                    speeds[port] = speed_match.group(1)
+                                else:
+                                    speeds[port] = "Link Up"
+                            break
+
+        # Fill in unknowns
+        for port in ports:
+            if port not in speeds:
+                speeds[port] = "Unknown"
+
+        return speeds
+
+    @staticmethod
+    def get_port_speeds_ruijie(ssh: SSHConnection, ports: List[str]) -> Dict[str, str]:
+        """Get port speeds for Ruijie interfaces"""
+        speeds = {}
+        stdout, stderr, exit_code = ssh.execute_command('show interfaces status')
+
+        if exit_code == 0:
+            for line in stdout.split('\n'):
+                # Parse Ruijie output similar to Cisco format
+                parts = line.split()
+                if len(parts) >= 4:
+                    interface = parts[0]
+                    for port in ports:
+                        if port in interface or interface in port:
+                            # Speed is typically in format like "1000" or "10G"
+                            if 'connected' in line.lower() or 'up' in line.lower():
+                                speed_match = re.search(r'(\d+(?:G|M)?)', line)
+                                if speed_match:
+                                    speed_str = speed_match.group(1)
+                                    # Convert to standard format
+                                    if speed_str.isdigit():
+                                        speeds[port] = PortSpeedDetector._format_speed(int(speed_str))
+                                    else:
+                                        speeds[port] = speed_str
+                            break
+
+        # Fill in unknowns
+        for port in ports:
+            if port not in speeds:
+                speeds[port] = "Unknown"
+
+        return speeds
+
+    @staticmethod
+    def get_port_speeds_proxmox(ssh: SSHConnection, ports: List[str]) -> Dict[str, str]:
+        """Get port speeds for Proxmox hosts (same as Linux)"""
+        return PortSpeedDetector.get_port_speeds_linux(ssh, ports)
+
+    @staticmethod
+    def _format_speed(speed_mbps: int) -> str:
+        """Format speed in Mbps to human-readable format"""
+        if speed_mbps >= 1000:
+            if speed_mbps % 1000 == 0:
+                return f"{speed_mbps // 1000}G"
+            else:
+                return f"{speed_mbps / 1000:.1f}G"
+        else:
+            return f"{speed_mbps}M"
 
 
 class LLDPParser:
@@ -506,10 +680,10 @@ class LLDPDiscovery:
             return []
 
         stdout, stderr, exit_code = ssh.execute_command(command)
-        ssh.close()
 
         if exit_code != 0:
             self.logger.warning(f"LLDP command failed on {device.hostname}: {stderr}")
+            ssh.close()
             return []
 
         # Parse output based on device type
@@ -525,6 +699,30 @@ class LLDPDiscovery:
         parser = parsers.get(device.device_type)
         neighbors = parser(stdout, device.hostname)
 
+        # Get port speeds for local ports
+        if neighbors:
+            local_ports = list(set([n.local_port for n in neighbors]))
+            self.logger.debug(f"Detecting speeds for ports: {local_ports}")
+
+            speed_detectors = {
+                'linux': PortSpeedDetector.get_port_speeds_linux,
+                'mikrotik': PortSpeedDetector.get_port_speeds_mikrotik,
+                'arista': PortSpeedDetector.get_port_speeds_arista,
+                'aruba': PortSpeedDetector.get_port_speeds_aruba,
+                'ruijie': PortSpeedDetector.get_port_speeds_ruijie,
+                'proxmox': PortSpeedDetector.get_port_speeds_proxmox
+            }
+
+            speed_detector = speed_detectors.get(device.device_type)
+            if speed_detector:
+                port_speeds = speed_detector(ssh, local_ports)
+
+                # Assign speeds to neighbors
+                for neighbor in neighbors:
+                    neighbor.local_port_speed = port_speeds.get(neighbor.local_port, "Unknown")
+                    self.logger.debug(f"{neighbor.local_port} speed: {neighbor.local_port_speed}")
+
+        ssh.close()
         self.logger.info(f"Found {len(neighbors)} LLDP neighbors on {device.hostname}")
         return neighbors
 
@@ -663,7 +861,8 @@ class LLDPDiscovery:
         for device in sorted(device_connections.keys()):
             self.logger.info(f"\n{device}:")
             for neighbor in sorted(device_connections[device], key=lambda x: x.local_port):
-                self.logger.info(f"  {neighbor.local_port:15} -> {neighbor.remote_device:20} ({neighbor.remote_port})")
+                speed_info = f"[{neighbor.local_port_speed}]" if neighbor.local_port_speed else ""
+                self.logger.info(f"  {neighbor.local_port:15} {speed_info:8} -> {neighbor.remote_device:20} ({neighbor.remote_port})")
 
         self.logger.info("\n" + "=" * 60)
 

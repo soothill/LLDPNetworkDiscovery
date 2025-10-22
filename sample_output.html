@@ -444,9 +444,19 @@
             transition: all 0.3s ease;
         }
 
+        .link.speed-10g {
+            stroke: rgba(52, 211, 153, 0.6);
+            stroke-width: 3;
+        }
+
+        .link.speed-1g {
+            stroke: rgba(96, 165, 250, 0.5);
+            stroke-width: 2;
+        }
+
         .link:hover {
             stroke: #667eea;
-            stroke-width: 3;
+            stroke-width: 4;
         }
 
         .link.active {
@@ -464,6 +474,14 @@
             font-size: 10px;
             fill: rgba(255, 255, 255, 0.8);
             font-family: 'Courier New', monospace;
+            text-anchor: middle;
+        }
+
+        .speed-label {
+            font-size: 9px;
+            fill: #a0d911;
+            font-weight: 600;
+            text-anchor: middle;
         }
 
         /* Tooltip */
@@ -711,18 +729,18 @@
                         <h3 class="card-title">Connections</h3>
                     </div>
                     <div class="connection-list">
-                        <div class="connection-item">core-sw-01:Eth1 ↔ core-sw-02:Eth1</div>
-                        <div class="connection-item">core-sw-01:Eth48 ↔ edge-router:ether1</div>
-                        <div class="connection-item">core-sw-02:Eth48 ↔ edge-router:ether2</div>
-                        <div class="connection-item">core-sw-01:Eth10 ↔ access-sw-01:1/1/1</div>
-                        <div class="connection-item">core-sw-02:Eth11 ↔ access-sw-01:1/1/2</div>
-                        <div class="connection-item">access-sw-01:1/1/5 ↔ ruijie-ap-01:Gi0/1</div>
-                        <div class="connection-item">core-sw-01:Eth20 ↔ proxmox-01:vmbr0</div>
-                        <div class="connection-item">core-sw-02:Eth21 ↔ proxmox-02:vmbr0</div>
-                        <div class="connection-item">access-sw-01:1/1/10 ↔ linux-srv-01:eth0</div>
-                        <div class="connection-item">access-sw-01:1/1/11 ↔ linux-srv-02:eth0</div>
-                        <div class="connection-item">core-sw-01:Eth25 ↔ ruijie-sw-01:Gi0/24</div>
-                        <div class="connection-item">ruijie-sw-01:Gi0/1 ↔ linux-srv-02:eth1</div>
+                        <div class="connection-item">core-sw-01:Eth1 [10G] ↔ core-sw-02:Eth1 [10G]</div>
+                        <div class="connection-item">core-sw-01:Eth48 [10G] ↔ edge-router:ether1 [10G]</div>
+                        <div class="connection-item">core-sw-02:Eth48 [10G] ↔ edge-router:ether2 [10G]</div>
+                        <div class="connection-item">core-sw-01:Eth10 [10G] ↔ access-sw-01:1/1/1 [10G]</div>
+                        <div class="connection-item">core-sw-02:Eth11 [10G] ↔ access-sw-01:1/1/2 [10G]</div>
+                        <div class="connection-item">access-sw-01:1/1/5 [1G] ↔ ruijie-ap-01:Gi0/1 [1G]</div>
+                        <div class="connection-item">core-sw-01:Eth20 [10G] ↔ proxmox-01:vmbr0 [10G]</div>
+                        <div class="connection-item">core-sw-02:Eth21 [10G] ↔ proxmox-02:vmbr0 [10G]</div>
+                        <div class="connection-item">access-sw-01:1/1/10 [1G] ↔ linux-srv-01:eth0 [1G]</div>
+                        <div class="connection-item">access-sw-01:1/1/11 [1G] ↔ linux-srv-02:eth0 [1G]</div>
+                        <div class="connection-item">core-sw-01:Eth25 [10G] ↔ ruijie-sw-01:Gi0/24 [10G]</div>
+                        <div class="connection-item">ruijie-sw-01:Gi0/1 [1G] ↔ linux-srv-02:eth1 [1G]</div>
                     </div>
                 </div>
             </aside>
@@ -758,43 +776,44 @@
 
                     <!-- Connections -->
                     <g id="links">
-                        <line class="link" x1="350" y1="350" x2="650" y2="350" stroke="#2ecc71"/>
-                        <text class="port-label" x="500" y="340">Eth1 ↔ Eth1</text>
+                        <line class="link speed-10g" x1="350" y1="350" x2="650" y2="350"/>
+                        <text class="port-label" x="500" y="335">Eth1 [10G]</text>
+                        <text class="speed-label" x="500" y="368">10 Gbps</text>
 
-                        <line class="link" x1="350" y1="350" x2="500" y2="150"/>
-                        <text class="port-label" x="410" y="240">Eth48</text>
-                        <text class="port-label" x="480" y="180">ether1</text>
+                        <line class="link speed-10g" x1="350" y1="350" x2="500" y2="150"/>
+                        <text class="port-label" x="405" y="235">Eth48 [10G]</text>
+                        <text class="port-label" x="475" y="175">ether1 [10G]</text>
 
-                        <line class="link" x1="650" y1="350" x2="500" y2="150"/>
-                        <text class="port-label" x="590" y="240">Eth48</text>
-                        <text class="port-label" x="520" y="180">ether2</text>
+                        <line class="link speed-10g" x1="650" y1="350" x2="500" y2="150"/>
+                        <text class="port-label" x="585" y="235">Eth48 [10G]</text>
+                        <text class="port-label" x="515" y="175">ether2 [10G]</text>
 
-                        <line class="link" x1="350" y1="350" x2="200" y2="500"/>
-                        <text class="port-label" x="265" y="420">Eth10</text>
+                        <line class="link speed-10g" x1="350" y1="350" x2="200" y2="500"/>
+                        <text class="port-label" x="260" y="415">Eth10 [10G]</text>
 
-                        <line class="link" x1="650" y1="350" x2="200" y2="500"/>
-                        <text class="port-label" x="425" y="425">Eth11</text>
+                        <line class="link speed-10g" x1="650" y1="350" x2="200" y2="500"/>
+                        <text class="port-label" x="420" y="420">Eth11 [10G]</text>
 
-                        <line class="link" x1="200" y1="500" x2="80" y2="600"/>
-                        <text class="port-label" x="130" y="550">1/1/10</text>
+                        <line class="link speed-1g" x1="200" y1="500" x2="80" y2="600"/>
+                        <text class="port-label" x="125" y="545">1/1/10 [1G]</text>
 
-                        <line class="link" x1="200" y1="500" x2="220" y2="600"/>
-                        <text class="port-label" x="220" y="550">1/1/11</text>
+                        <line class="link speed-1g" x1="200" y1="500" x2="220" y2="600"/>
+                        <text class="port-label" x="215" y="545">1/1/11 [1G]</text>
 
-                        <line class="link" x1="200" y1="500" x2="360" y2="600"/>
-                        <text class="port-label" x="270" y="550">1/1/5</text>
+                        <line class="link speed-1g" x1="200" y1="500" x2="360" y2="600"/>
+                        <text class="port-label" x="265" y="545">1/1/5 [1G]</text>
 
-                        <line class="link" x1="350" y1="350" x2="750" y2="500"/>
-                        <text class="port-label" x="550" y="425">Eth20</text>
+                        <line class="link speed-10g" x1="350" y1="350" x2="750" y2="500"/>
+                        <text class="port-label" x="545" y="420">Eth20 [10G]</text>
 
-                        <line class="link" x1="650" y1="350" x2="900" y2="500"/>
-                        <text class="port-label" x="775" y="425">Eth21</text>
+                        <line class="link speed-10g" x1="650" y1="350" x2="900" y2="500"/>
+                        <text class="port-label" x="770" y="420">Eth21 [10G]</text>
 
-                        <line class="link" x1="350" y1="350" x2="500" y2="500"/>
-                        <text class="port-label" x="415" y="425">Eth25</text>
+                        <line class="link speed-10g" x1="350" y1="350" x2="500" y2="500"/>
+                        <text class="port-label" x="410" y="420">Eth25 [10G]</text>
 
-                        <line class="link" x1="500" y1="500" x2="220" y2="600"/>
-                        <text class="port-label" x="350" y="550">Gi0/1</text>
+                        <line class="link speed-1g" x1="500" y1="500" x2="220" y2="600"/>
+                        <text class="port-label" x="345" y="545">Gi0/1 [1G]</text>
                     </g>
 
                     <!-- Nodes -->

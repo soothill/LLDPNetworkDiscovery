@@ -6,8 +6,9 @@ A comprehensive Python tool for discovering and visualizing network topology usi
 
 - **Multi-Vendor Support**: Works with Linux, MikroTik, Arista EOS, HP Aruba, Ruijie, and Proxmox devices
 - **SSH-Based Discovery**: Securely connects to devices via SSH with per-device credential configuration
+- **Port Speed Detection**: Automatically detects and displays network port speeds (1G, 10G, etc.)
 - **Connectivity Testing**: Built-in testing mode to verify device accessibility before discovery
-- **Network Visualization**: Generates beautiful graphical network topology diagrams
+- **Network Visualization**: Generates beautiful graphical network topology diagrams with port speeds
 - **Multiple Output Formats**: Exports topology data in JSON and PNG formats
 - **Flexible Authentication**: Supports both password and SSH key-based authentication
 - **Detailed Logging**: Verbose mode for troubleshooting and debugging
