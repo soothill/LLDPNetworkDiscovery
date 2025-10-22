@@ -108,9 +108,22 @@ class SSHConnection:
             return "", "Not connected", 1
 
         try:
-            stdin, stdout, stderr = self.client.exec_command(command, timeout=self.timeout)
+            # Request a pseudo-TTY for sudo commands to work properly
+            stdin, stdout, stderr = self.client.exec_command(command, timeout=self.timeout, get_pty=True)
             exit_code = stdout.channel.recv_exit_status()
-            return stdout.read().decode('utf-8'), stderr.read().decode('utf-8'), exit_code
+
+            # Read output
+            stdout_data = stdout.read().decode('utf-8')
+            stderr_data = stderr.read().decode('utf-8')
+
+            # When get_pty=True, stderr is redirected to stdout, so we need to handle this
+            # If stderr is empty but command failed, the error is in stdout
+            if exit_code != 0 and not stderr_data and stdout_data:
+                # Check if stdout contains error messages
+                if 'permission denied' in stdout_data.lower() or 'command not found' in stdout_data.lower():
+                    stderr_data = stdout_data
+
+            return stdout_data, stderr_data, exit_code
         except Exception as e:
             self.logger.error(f"Error executing command on {self.device.hostname}: {e}")
             return "", str(e), 1
