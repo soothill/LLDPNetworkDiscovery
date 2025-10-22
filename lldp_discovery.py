@@ -156,30 +156,50 @@ class PortSpeedDetector:
     def get_port_speeds_mikrotik(ssh: SSHConnection, ports: List[str]) -> Dict[str, str]:
         """Get port speeds for MikroTik interfaces"""
         speeds = {}
-        stdout, stderr, exit_code = ssh.execute_command('/interface print detail without-paging')
+
+        # Use ethernet print command for speed info
+        stdout, stderr, exit_code = ssh.execute_command('/interface ethernet print detail without-paging')
 
         if exit_code == 0:
             current_interface = None
+            current_rate = None
+
             for line in stdout.split('\n'):
                 line = line.strip()
 
-                # Match interface name
-                name_match = re.search(r'name="?([^"\s]+)"?', line)
+                # Match interface name (e.g., "name=ether1" or just line starting with number)
+                name_match = re.search(r'name[=:]\s*"?([^"\s,]+)"?', line)
                 if name_match:
-                    current_interface = name_match.group(1)
+                    # Save previous interface if we had one
+                    if current_interface and current_rate and current_interface in ports:
+                        speeds[current_interface] = current_rate
 
-                # Match running speed
-                if current_interface and 'running=' in line:
-                    speed_match = re.search(r'running=(\S+)', line)
-                    if speed_match and current_interface in ports:
-                        running = speed_match.group(1).lower()
-                        if 'yes' in running or 'true' in running:
-                            # Get actual rate
-                            rate_match = re.search(r'rate=(\S+)', line)
-                            if rate_match:
-                                speeds[current_interface] = rate_match.group(1)
-                            else:
-                                speeds[current_interface] = "Link Up"
+                    current_interface = name_match.group(1)
+                    current_rate = None
+
+                # Match rate/speed (can be "rate:", "rate=", or "speed:")
+                if current_interface:
+                    # Try different patterns for speed
+                    speed_patterns = [
+                        r'rate[=:]\s*(\d+[MG])',
+                        r'speed[=:]\s*(\d+[MG])',
+                        r'actual-rate[=:]\s*(\d+[MG])',
+                        r'(\d+Mbps|\d+Gbps)'
+                    ]
+
+                    for pattern in speed_patterns:
+                        rate_match = re.search(pattern, line, re.IGNORECASE)
+                        if rate_match:
+                            rate_str = rate_match.group(1)
+                            # Normalize format
+                            if 'Mbps' in rate_str or 'Gbps' in rate_str:
+                                rate_str = rate_str.replace('bps', '').replace('M', 'M').replace('G', 'G')
+                            current_rate = rate_str
+                            break
+
+            # Save last interface
+            if current_interface and current_rate and current_interface in ports:
+                speeds[current_interface] = current_rate
 
         # Fill in unknowns
         for port in ports:
@@ -347,42 +367,55 @@ class LLDPParser:
 
     @staticmethod
     def parse_mikrotik(output: str, hostname: str) -> List[LLDPNeighbor]:
-        """Parse LLDP output from MikroTik"""
+        """Parse LLDP output from MikroTik using /ip neighbor print detail"""
         neighbors = []
 
-        # Parse MikroTik /interface lldp print detail
+        # Parse MikroTik /ip neighbor print detail output
+        # This shows IP neighbor discovery info (includes LLDP/CDP data)
         lines = output.split('\n')
         current_neighbor = {}
 
         for line in lines:
             line = line.strip()
+
+            # Skip empty lines and header
             if not line or line.startswith('Flags:'):
                 continue
 
-            if line.startswith('0') or re.match(r'^\d+\s+', line):
-                # Start of new neighbor entry
-                if current_neighbor and 'interface' in current_neighbor and 'system-name' in current_neighbor:
+            # New entry starts with a number or when we see "interface:" after data
+            if re.match(r'^\d+\s', line) or (line.startswith('interface:') and current_neighbor):
+                # Save previous neighbor if it has required fields
+                if current_neighbor.get('interface') and current_neighbor.get('identity'):
+                    # Extract interface name (could be in format "interface: ether1" or just "ether1")
+                    interface = current_neighbor.get('interface', '').strip()
+
                     neighbors.append(LLDPNeighbor(
                         local_device=hostname,
-                        local_port=current_neighbor.get('interface', ''),
-                        remote_device=current_neighbor.get('system-name', ''),
-                        remote_port=current_neighbor.get('port-id', ''),
-                        remote_description=current_neighbor.get('port-description')
+                        local_port=interface,
+                        remote_device=current_neighbor.get('identity', ''),
+                        remote_port=current_neighbor.get('interface-name', current_neighbor.get('interface', '')),
+                        remote_description=current_neighbor.get('platform', '')
                     ))
                 current_neighbor = {}
 
+            # Parse key-value pairs
             if ':' in line:
-                key, value = line.split(':', 1)
-                current_neighbor[key.strip().lower()] = value.strip()
+                parts = line.split(':', 1)
+                if len(parts) == 2:
+                    key = parts[0].strip().lower()
+                    value = parts[1].strip()
+                    current_neighbor[key] = value
 
         # Add last neighbor
-        if current_neighbor and 'interface' in current_neighbor and 'system-name' in current_neighbor:
+        if current_neighbor.get('interface') and current_neighbor.get('identity'):
+            interface = current_neighbor.get('interface', '').strip()
+
             neighbors.append(LLDPNeighbor(
                 local_device=hostname,
-                local_port=current_neighbor.get('interface', ''),
-                remote_device=current_neighbor.get('system-name', ''),
-                remote_port=current_neighbor.get('port-id', ''),
-                remote_description=current_neighbor.get('port-description')
+                local_port=interface,
+                remote_device=current_neighbor.get('identity', ''),
+                remote_port=current_neighbor.get('interface-name', current_neighbor.get('interface', '')),
+                remote_description=current_neighbor.get('platform', '')
             ))
 
         return neighbors
@@ -667,7 +700,7 @@ class LLDPDiscovery:
         # Device-specific LLDP commands
         lldp_commands = {
             'linux': 'lldpctl',
-            'mikrotik': '/interface lldp print detail',
+            'mikrotik': '/ip neighbor print detail',
             'arista': 'show lldp neighbors detail',
             'aruba': 'show lldp neighbors detail',
             'ruijie': 'show lldp neighbors detail',
