@@ -1599,21 +1599,73 @@ class LLDPDiscovery:
             y = center_y + radius * sin(angle)
             device_positions[device_name] = (x, y)
 
-        # Draw links
+        # Group connections by device pair to handle multiple links
+        from collections import defaultdict
+        import math
+
+        connection_groups = defaultdict(list)
         for conn in connections:
             if conn['local_device'] in device_positions and conn['remote_device'] in device_positions:
+                # Create a sorted pair key to group bidirectional links
+                pair = tuple(sorted([conn['local_device'], conn['remote_device']]))
+                connection_groups[pair].append(conn)
+
+        # Draw links with smart label positioning
+        for pair, conns in connection_groups.items():
+            num_links = len(conns)
+
+            for idx, conn in enumerate(conns):
                 x1, y1 = device_positions[conn['local_device']]
                 x2, y2 = device_positions[conn['remote_device']]
                 speed_class = conn['speed_class']
 
-                html_content += f'''                        <line class="link {speed_class}" x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}"/>
+                # Calculate line angle and perpendicular offset for multiple links
+                dx = x2 - x1
+                dy = y2 - y1
+                length = math.sqrt(dx*dx + dy*dy)
+
+                # Offset multiple links perpendicular to the line
+                if num_links > 1:
+                    # Calculate perpendicular offset
+                    offset_amount = ((idx - (num_links - 1) / 2) * 15)  # 15px spacing
+                    perp_x = -dy / length * offset_amount
+                    perp_y = dx / length * offset_amount
+
+                    line_x1 = x1 + perp_x
+                    line_y1 = y1 + perp_y
+                    line_x2 = x2 + perp_x
+                    line_y2 = y2 + perp_y
+                else:
+                    line_x1, line_y1 = x1, y1
+                    line_x2, line_y2 = x2, y2
+
+                html_content += f'''                        <line class="link {speed_class}" x1="{line_x1}" y1="{line_y1}" x2="{line_x2}" y2="{line_y2}"/>
 '''
 
-                # Add port labels at midpoint
-                mid_x = (x1 + x2) / 2
-                mid_y = (y1 + y2) / 2
-                speed_label = f" [{conn['local_speed']}]" if conn['local_speed'] else ""
-                html_content += f'''                        <text class="port-label" x="{mid_x}" y="{mid_y - 5}">{conn['local_port']}{speed_label}</text>
+                # Position labels closer to endpoints with offset for multiple links
+                # Local port label (1/4 from source)
+                local_frac = 0.25
+                local_x = line_x1 + (line_x2 - line_x1) * local_frac
+                local_y = line_y1 + (line_y2 - line_y1) * local_frac
+
+                # Remote port label (3/4 from source = 1/4 from destination)
+                remote_frac = 0.75
+                remote_x = line_x1 + (line_x2 - line_x1) * remote_frac
+                remote_y = line_y1 + (line_y2 - line_y1) * remote_frac
+
+                # Add small perpendicular offset to labels to avoid overlapping the line
+                label_offset = 8
+                label_perp_x = -dy / length * label_offset
+                label_perp_y = dx / length * label_offset
+
+                speed_label_local = f" [{conn['local_speed']}]" if conn['local_speed'] else ""
+                speed_label_remote = f" [{conn['remote_speed']}]" if conn['remote_speed'] else ""
+
+                # Local port label
+                html_content += f'''                        <text class="port-label" x="{local_x + label_perp_x}" y="{local_y + label_perp_y}">{conn['local_port']}{speed_label_local}</text>
+'''
+                # Remote port label
+                html_content += f'''                        <text class="port-label" x="{remote_x + label_perp_x}" y="{remote_y + label_perp_y}">{conn['remote_port']}{speed_label_remote}</text>
 '''
 
         html_content += '''                    </g>
