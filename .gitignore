@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.pyc
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# Generated reports and diagrams
+*.csv
+*.html
+*.png
+*.svg
+*.pdf
+network_topology_*
+network_diagram_*
+lldp_report_*
+
+# Credentials and config files
+devices.json
+config.json
+*.secret
+*.key
+*.pem
+id_rsa*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
