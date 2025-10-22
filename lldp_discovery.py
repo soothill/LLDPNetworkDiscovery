@@ -71,13 +71,20 @@ class SSHConnection:
             self.client = paramiko.SSHClient()
             self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
+            # Enable legacy algorithms for older network devices
+            # Get the default transport to modify security options
+            transport = self.client.get_transport() if hasattr(self.client, 'get_transport') else None
+
             connect_params = {
                 'hostname': self.device.ip_address,
                 'username': self.device.username,
                 'port': self.device.port,
                 'timeout': self.timeout,
                 'look_for_keys': False,
-                'allow_agent': False
+                'allow_agent': False,
+                'disabled_algorithms': {
+                    # Don't disable anything - allow all algorithms including legacy ones
+                }
             }
 
             if self.device.ssh_key:
@@ -88,7 +95,59 @@ class SSHConnection:
                 self.logger.error(f"No authentication method provided for {self.device.hostname}")
                 return False
 
-            self.client.connect(**connect_params)
+            # First attempt with legacy algorithm support
+            try:
+                self.client.connect(**connect_params)
+            except paramiko.SSHException as e:
+                if 'no acceptable host key' in str(e).lower() or 'incompatible' in str(e).lower():
+                    self.logger.info(f"Retrying {self.device.hostname} with legacy SSH algorithms enabled...")
+
+                    # Close and recreate client
+                    self.client.close()
+                    self.client = paramiko.SSHClient()
+                    self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+                    # Manually enable legacy algorithms by modifying Transport class defaults
+                    # This is a workaround for older devices
+                    import paramiko.transport as transport_module
+
+                    # Store original values
+                    original_preferred_keys = transport_module.Transport._preferred_keys
+                    original_preferred_kex = transport_module.Transport._preferred_kex
+
+                    try:
+                        # Add legacy algorithms temporarily
+                        transport_module.Transport._preferred_keys = (
+                            'ssh-ed25519',
+                            'ecdsa-sha2-nistp256',
+                            'ecdsa-sha2-nistp384',
+                            'ecdsa-sha2-nistp521',
+                            'rsa-sha2-512',
+                            'rsa-sha2-256',
+                            'ssh-rsa',  # Legacy
+                            'ssh-dss',  # Legacy
+                        )
+
+                        transport_module.Transport._preferred_kex = (
+                            'ecdh-sha2-nistp256',
+                            'ecdh-sha2-nistp384',
+                            'ecdh-sha2-nistp521',
+                            'diffie-hellman-group16-sha512',
+                            'diffie-hellman-group-exchange-sha256',
+                            'diffie-hellman-group14-sha256',
+                            'diffie-hellman-group-exchange-sha1',  # Legacy
+                            'diffie-hellman-group14-sha1',  # Legacy
+                            'diffie-hellman-group1-sha1',  # Legacy
+                        )
+
+                        # Retry connection with legacy algorithms
+                        self.client.connect(**connect_params)
+                    finally:
+                        # Restore original values
+                        transport_module.Transport._preferred_keys = original_preferred_keys
+                        transport_module.Transport._preferred_kex = original_preferred_kex
+                else:
+                    raise
             self.logger.info(f"Successfully connected to {self.device.hostname} ({self.device.ip_address})")
             return True
 
