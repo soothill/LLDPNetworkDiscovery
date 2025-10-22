@@ -745,7 +745,9 @@ class LLDPDiscovery:
             self.logger.error(f"  Stdout: {stdout[:500]}")  # First 500 chars of stdout for context
 
             # Special handling for Linux/Proxmox sudo issues
-            if device.device_type in ['linux', 'proxmox'] and ('sudo' in stderr.lower() or 'permission denied' in stderr.lower() or 'lldpctl' in stderr.lower()):
+            # Check both stderr and stdout (PTY mode redirects stderr to stdout)
+            combined_output = (stderr + stdout).lower()
+            if device.device_type in ['linux', 'proxmox'] and ('sudo' in combined_output or 'permission denied' in combined_output or 'lldpctl' in combined_output):
                 self.logger.error("")
                 self.logger.error("=" * 60)
                 self.logger.error("SUDO CONFIGURATION REQUIRED")
