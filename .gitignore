@@ -17,6 +17,7 @@ ENV/
 *.html
 !sample_output.html
 *.png
+!sample_network_topology.png
 *.svg
 *.pdf
 network_topology_*
