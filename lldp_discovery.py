@@ -635,6 +635,7 @@ class LLDPDiscovery:
         self.devices: List[DeviceConfig] = []
         self.neighbors: List[LLDPNeighbor] = []
         self.logger = self._setup_logging(verbose)
+        self.hostname_map = {}  # Maps LLDP identities to configured hostnames
 
     def _setup_logging(self, verbose: bool) -> logging.Logger:
         """Setup logging configuration"""
@@ -645,6 +646,60 @@ class LLDPDiscovery:
             datefmt='%Y-%m-%d %H:%M:%S'
         )
         return logging.getLogger(__name__)
+
+    def _normalize_hostname(self, name: str) -> str:
+        """Normalize a hostname for comparison
+
+        Removes common suffixes and converts to lowercase for matching
+        """
+        if not name:
+            return ""
+
+        # Convert to lowercase
+        normalized = name.lower().strip()
+
+        # Remove common domain suffixes
+        for suffix in ['.local', '.lan', '.home', '.internal']:
+            if normalized.endswith(suffix):
+                normalized = normalized[:-len(suffix)]
+                break
+
+        # Remove manufacturer prefixes (e.g., "MikroTik " prefix)
+        for prefix in ['mikrotik ', 'cisco ', 'hp ', 'arista ', 'aruba ']:
+            if normalized.startswith(prefix):
+                normalized = normalized[len(prefix):]
+                break
+
+        return normalized
+
+    def _find_matching_hostname(self, lldp_identity: str) -> str:
+        """Find the configured hostname that matches an LLDP identity
+
+        Returns the configured hostname, or the original LLDP identity if no match
+        """
+        normalized_identity = self._normalize_hostname(lldp_identity)
+
+        # Check if we already have this mapping cached
+        if lldp_identity in self.hostname_map:
+            return self.hostname_map[lldp_identity]
+
+        # Try to find a matching configured device
+        for device in self.devices:
+            normalized_device = self._normalize_hostname(device.hostname)
+
+            # Exact match after normalization
+            if normalized_identity == normalized_device:
+                self.hostname_map[lldp_identity] = device.hostname
+                return device.hostname
+
+            # Partial match (identity contains device name or vice versa)
+            if normalized_identity in normalized_device or normalized_device in normalized_identity:
+                self.hostname_map[lldp_identity] = device.hostname
+                return device.hostname
+
+        # No match found, return original identity
+        self.hostname_map[lldp_identity] = lldp_identity
+        return lldp_identity
 
     def load_config(self) -> bool:
         """Load device configuration from JSON file"""
@@ -838,11 +893,27 @@ class LLDPDiscovery:
             neighbors = self.collect_lldp_neighbors(device)
             self.neighbors.extend(neighbors)
 
+        # Normalize hostnames in neighbor relationships
+        self._normalize_neighbor_hostnames()
+
         self.logger.info("=" * 60)
         self.logger.info(f"Discovery complete. Found {len(self.neighbors)} neighbor relationships")
         self.logger.info("=" * 60)
 
         return len(self.neighbors) > 0
+
+    def _normalize_neighbor_hostnames(self):
+        """Normalize LLDP identities to match configured hostnames"""
+        for neighbor in self.neighbors:
+            # Normalize local device (should already match, but just in case)
+            neighbor.local_device = self._find_matching_hostname(neighbor.local_device)
+
+            # Normalize remote device (this is where LLDP identities may differ)
+            original_remote = neighbor.remote_device
+            neighbor.remote_device = self._find_matching_hostname(neighbor.remote_device)
+
+            if original_remote != neighbor.remote_device:
+                self.logger.debug(f"Normalized '{original_remote}' -> '{neighbor.remote_device}'")
 
     def export_to_json(self, output_file: str):
         """Export discovered topology to JSON"""
