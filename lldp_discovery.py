@@ -1431,6 +1431,21 @@ class LLDPDiscovery:
             text-anchor: middle;
         }}
 
+        .port-label-box {{
+            fill: rgba(15, 23, 42, 0.9);
+            stroke: rgba(148, 163, 184, 0.3);
+            stroke-width: 1;
+            rx: 4;
+            ry: 4;
+        }}
+
+        .port-label-text {{
+            fill: #e2e8f0;
+            font-size: 10px;
+            font-family: 'Courier New', monospace;
+            text-anchor: middle;
+        }}
+
         .tooltip {{
             position: absolute;
             background: rgba(15, 23, 42, 0.95);
@@ -1610,19 +1625,27 @@ class LLDPDiscovery:
                 pair = tuple(sorted([conn['local_device'], conn['remote_device']]))
                 connection_groups[pair].append(conn)
 
-        # Draw links with smart label positioning
+        # Draw links with grouped label boxes
         for pair, conns in connection_groups.items():
             num_links = len(conns)
 
-            for idx, conn in enumerate(conns):
-                x1, y1 = device_positions[conn['local_device']]
-                x2, y2 = device_positions[conn['remote_device']]
-                speed_class = conn['speed_class']
+            # Get the base positions for this pair
+            device1, device2 = pair
+            x1, y1 = device_positions[device1]
+            x2, y2 = device_positions[device2]
 
-                # Calculate line angle and perpendicular offset for multiple links
-                dx = x2 - x1
-                dy = y2 - y1
-                length = math.sqrt(dx*dx + dy*dy)
+            # Calculate line properties
+            dx = x2 - x1
+            dy = y2 - y1
+            length = math.sqrt(dx*dx + dy*dy)
+
+            # Calculate midpoint for label box
+            mid_x = (x1 + x2) / 2
+            mid_y = (y1 + y2) / 2
+
+            # Draw each link line
+            for idx, conn in enumerate(conns):
+                speed_class = conn['speed_class']
 
                 # Offset multiple links perpendicular to the line
                 if num_links > 1:
@@ -1642,30 +1665,48 @@ class LLDPDiscovery:
                 html_content += f'''                        <line class="link {speed_class}" x1="{line_x1}" y1="{line_y1}" x2="{line_x2}" y2="{line_y2}"/>
 '''
 
-                # Position labels closer to endpoints with offset for multiple links
-                # Local port label (1/4 from source)
-                local_frac = 0.25
-                local_x = line_x1 + (line_x2 - line_x1) * local_frac
-                local_y = line_y1 + (line_y2 - line_y1) * local_frac
+            # Create a grouped label box at midpoint
+            # Calculate box dimensions based on number of connections
+            line_height = 14
+            padding = 4
+            box_height = num_links * line_height + 2 * padding
+            box_width = 120  # Fixed width for consistent sizing
 
-                # Remote port label (3/4 from source = 1/4 from destination)
-                remote_frac = 0.75
-                remote_x = line_x1 + (line_x2 - line_x1) * remote_frac
-                remote_y = line_y1 + (line_y2 - line_y1) * remote_frac
+            # Position box perpendicular to line to avoid overlapping
+            perp_offset = 20
+            perp_x = -dy / length * perp_offset
+            perp_y = dx / length * perp_offset
 
-                # Add small perpendicular offset to labels to avoid overlapping the line
-                label_offset = 8
-                label_perp_x = -dy / length * label_offset
-                label_perp_y = dx / length * label_offset
+            box_x = mid_x + perp_x - box_width / 2
+            box_y = mid_y + perp_y - box_height / 2
 
-                speed_label_local = f" [{conn['local_speed']}]" if conn['local_speed'] else ""
-                speed_label_remote = f" [{conn['remote_speed']}]" if conn['remote_speed'] else ""
-
-                # Local port label
-                html_content += f'''                        <text class="port-label" x="{local_x + label_perp_x}" y="{local_y + label_perp_y}">{conn['local_port']}{speed_label_local}</text>
+            # Draw label box background
+            html_content += f'''                        <rect class="port-label-box" x="{box_x}" y="{box_y}" width="{box_width}" height="{box_height}"/>
 '''
-                # Remote port label
-                html_content += f'''                        <text class="port-label" x="{remote_x + label_perp_x}" y="{remote_y + label_perp_y}">{conn['remote_port']}{speed_label_remote}</text>
+
+            # Add stacked labels for each connection
+            for idx, conn in enumerate(conns):
+                text_y = box_y + padding + (idx + 0.7) * line_height
+
+                # Determine which device is local vs remote based on original connection
+                if conn['local_device'] == device1:
+                    local_port = conn['local_port']
+                    remote_port = conn['remote_port']
+                    local_speed = conn['local_speed']
+                    remote_speed = conn['remote_speed']
+                else:
+                    # Swap if reversed
+                    local_port = conn['remote_port']
+                    remote_port = conn['local_port']
+                    local_speed = conn['remote_speed']
+                    remote_speed = conn['local_speed']
+
+                speed_label_local = f" [{local_speed}]" if local_speed else ""
+                speed_label_remote = f" [{remote_speed}]" if remote_speed else ""
+
+                label_text = f"{local_port}{speed_label_local} ↔ {remote_port}{speed_label_remote}"
+
+                html_content += f'''                        <text class="port-label-text" x="{mid_x + perp_x}" y="{text_y}">{label_text}</text>
 '''
 
         html_content += '''                    </g>
