@@ -1048,34 +1048,59 @@ class LLDPDiscovery:
             margin-top: 0.125rem;
         }}
 
-        .speed-legend-item {{
-            display: flex;
-            align-items: center;
-            padding: 0.5rem 0.75rem;
-            background: rgba(255, 255, 255, 0.03);
-            border-radius: 6px;
-            margin-bottom: 0.4rem;
-            transition: all 0.3s ease;
-            gap: 0.5rem;
+        /* Speed Legend Table */
+        .speed-legend-table {{
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
         }}
 
-        .speed-legend-item:last-child {{
-            margin-bottom: 0;
+        .speed-legend-table tr {{
+            transition: background 0.2s ease;
         }}
 
-        .speed-legend-item:hover {{
-            background: rgba(255, 255, 255, 0.08);
-            transform: translateX(4px);
+        .speed-legend-table tr:hover {{
+            background: rgba(255, 255, 255, 0.05);
         }}
 
-        .speed-legend-item svg {{
-            flex-shrink: 0;
+        .speed-line-cell {{
+            width: 50px;
+            padding: 0.6rem 0.75rem;
+            vertical-align: middle;
         }}
 
-        .speed-legend-item span {{
-            font-size: 0.85rem;
+        .speed-label-cell {{
+            padding: 0.6rem 0.75rem;
+            font-size: 0.9rem;
             font-weight: 500;
-            white-space: nowrap;
+            color: rgba(226, 232, 240, 0.95);
+            vertical-align: middle;
+        }}
+
+        .speed-line {{
+            height: 0;
+            border-radius: 2px;
+        }}
+
+        .speed-line.speed-1g {{
+            border-top: 2px solid rgba(96, 165, 250, 0.9);
+        }}
+
+        .speed-line.speed-10g {{
+            border-top: 3px solid rgba(52, 211, 153, 0.9);
+        }}
+
+        .speed-line.speed-40g {{
+            border-top: 4px solid rgba(251, 191, 36, 0.9);
+        }}
+
+        .speed-line.speed-100g {{
+            border-top: 5px solid rgba(249, 115, 22, 0.9);
+        }}
+
+        .speed-line.speed-400g {{
+            border-top: 6px solid rgba(239, 68, 68, 0.9);
+            filter: drop-shadow(0 0 4px rgba(239, 68, 68, 0.4));
         }}
 
         .connection-list {{
@@ -1245,38 +1270,40 @@ class LLDPDiscovery:
                     <div class="card-icon">⚡</div>
                     <h3 class="card-title">Link Speeds</h3>
                 </div>
-                <div class="legend-items">
-                    <div class="speed-legend-item">
-                        <svg width="40" height="8" style="display: block;">
-                            <line class="link speed-1g" x1="2" y1="4" x2="38" y2="4" />
-                        </svg>
-                        <span style="color: rgba(96, 165, 250, 0.9);">1 Gbps</span>
-                    </div>
-                    <div class="speed-legend-item">
-                        <svg width="40" height="8" style="display: block;">
-                            <line class="link speed-10g" x1="2" y1="4" x2="38" y2="4" />
-                        </svg>
-                        <span style="color: rgba(52, 211, 153, 0.9);">10 Gbps</span>
-                    </div>
-                    <div class="speed-legend-item">
-                        <svg width="40" height="10" style="display: block;">
-                            <line class="link speed-40g" x1="2" y1="5" x2="38" y2="5" />
-                        </svg>
-                        <span style="color: rgba(251, 191, 36, 0.9);">40 Gbps</span>
-                    </div>
-                    <div class="speed-legend-item">
-                        <svg width="40" height="12" style="display: block;">
-                            <line class="link speed-100g" x1="2" y1="6" x2="38" y2="6" />
-                        </svg>
-                        <span style="color: rgba(249, 115, 22, 0.9);">100 Gbps</span>
-                    </div>
-                    <div class="speed-legend-item">
-                        <svg width="40" height="14" style="display: block;">
-                            <line class="link speed-400g" x1="2" y1="7" x2="38" y2="7" />
-                        </svg>
-                        <span style="color: rgba(239, 68, 68, 0.9);">400 Gbps</span>
-                    </div>
-                </div>
+                <table class="speed-legend-table">
+                    <tbody>
+                        <tr>
+                            <td class="speed-line-cell">
+                                <div class="speed-line speed-1g"></div>
+                            </td>
+                            <td class="speed-label-cell">1 Gbps</td>
+                        </tr>
+                        <tr>
+                            <td class="speed-line-cell">
+                                <div class="speed-line speed-10g"></div>
+                            </td>
+                            <td class="speed-label-cell">10 Gbps</td>
+                        </tr>
+                        <tr>
+                            <td class="speed-line-cell">
+                                <div class="speed-line speed-40g"></div>
+                            </td>
+                            <td class="speed-label-cell">40 Gbps</td>
+                        </tr>
+                        <tr>
+                            <td class="speed-line-cell">
+                                <div class="speed-line speed-100g"></div>
+                            </td>
+                            <td class="speed-label-cell">100 Gbps</td>
+                        </tr>
+                        <tr>
+                            <td class="speed-line-cell">
+                                <div class="speed-line speed-400g"></div>
+                            </td>
+                            <td class="speed-label-cell">400 Gbps</td>
+                        </tr>
+                    </tbody>
+                </table>
             </div>
 
             <div class="card">
