@@ -991,15 +991,22 @@ class LLDPDiscovery:
             G.add_node(device.hostname, device_type=device.device_type)
 
         # Add edges with port information
+        # Use MultiGraph to support multiple edges between same devices
         edge_labels = {}
         for neighbor in self.neighbors:
             # Create edge
             G.add_edge(neighbor.local_device, neighbor.remote_device)
 
-            # Store port information for edge labels
+            # Store port information for edge labels (aggregate multiple links)
             edge_key = (neighbor.local_device, neighbor.remote_device)
             if edge_key not in edge_labels:
-                edge_labels[edge_key] = f"{neighbor.local_port}\n↕\n{neighbor.remote_port}"
+                edge_labels[edge_key] = []
+            edge_labels[edge_key].append(f"{neighbor.local_port}↕{neighbor.remote_port}")
+
+        # Format edge labels to show all links
+        formatted_edge_labels = {}
+        for edge_key, ports in edge_labels.items():
+            formatted_edge_labels[edge_key] = "\n".join(ports)
 
         # Create visualization
         plt.figure(figsize=(16, 12))
@@ -1034,8 +1041,8 @@ class LLDPDiscovery:
         # Draw labels
         nx.draw_networkx_labels(G, pos, font_size=10, font_weight='bold')
 
-        # Draw edge labels (port information)
-        nx.draw_networkx_edge_labels(G, pos, edge_labels, font_size=8,
+        # Draw edge labels (port information) - using formatted labels
+        nx.draw_networkx_edge_labels(G, pos, formatted_edge_labels, font_size=8,
                                      bbox=dict(boxstyle='round,pad=0.3',
                                              facecolor='white', alpha=0.7))
 
@@ -1125,24 +1132,20 @@ class LLDPDiscovery:
                 'ip': device.ip_address
             }
 
-        # Build connection list with speeds
+        # Build connection list with speeds - include ALL physical links
         connections = []
-        processed_pairs = set()
         for neighbor in self.neighbors:
-            pair = tuple(sorted([neighbor.local_device, neighbor.remote_device]))
-            if pair not in processed_pairs:
-                speed_local = f" [{neighbor.local_port_speed}]" if neighbor.local_port_speed else ""
-                speed_remote = f" [{neighbor.remote_port_speed}]" if neighbor.remote_port_speed else ""
-                connections.append({
-                    'local_device': neighbor.local_device,
-                    'local_port': neighbor.local_port,
-                    'remote_device': neighbor.remote_device,
-                    'remote_port': neighbor.remote_port,
-                    'local_speed': neighbor.local_port_speed,
-                    'remote_speed': neighbor.remote_port_speed,
-                    'speed_class': self._get_speed_class(neighbor.local_port_speed)
-                })
-                processed_pairs.add(pair)
+            speed_local = f" [{neighbor.local_port_speed}]" if neighbor.local_port_speed else ""
+            speed_remote = f" [{neighbor.remote_port_speed}]" if neighbor.remote_port_speed else ""
+            connections.append({
+                'local_device': neighbor.local_device,
+                'local_port': neighbor.local_port,
+                'remote_device': neighbor.remote_device,
+                'remote_port': neighbor.remote_port,
+                'local_speed': neighbor.local_port_speed,
+                'remote_speed': neighbor.remote_port_speed,
+                'speed_class': self._get_speed_class(neighbor.local_port_speed)
+            })
 
         # Generate HTML
         html_content = f'''<!DOCTYPE html>
