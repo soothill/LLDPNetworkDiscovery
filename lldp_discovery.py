@@ -902,9 +902,49 @@ class LLDPDiscovery:
 
         return len(self.neighbors) > 0
 
+    def _is_physical_interface(self, interface_name: str) -> bool:
+        """Check if an interface is physical (not virtual like VLAN, bridge, tunnel)"""
+        if not interface_name:
+            return False
+
+        interface_lower = interface_name.lower()
+
+        # Virtual interface patterns to exclude
+        virtual_patterns = [
+            'vlan',      # VLAN interfaces
+            'bridge',    # Bridge interfaces
+            'tunnel',    # Tunnel interfaces
+            'loopback',  # Loopback
+            'lo',        # Loopback (short form)
+            'null',      # Null interface
+            'bond',      # Bonded interfaces
+            'lag',       # Link aggregation
+            'port-channel',  # Port channel
+            'veth',      # Virtual ethernet
+            'docker',    # Docker interfaces
+            'virbr',     # Virtual bridge
+            'wg',        # WireGuard
+            'tun',       # Tunnel
+            'tap',       # TAP device
+        ]
+
+        # Check if interface name contains any virtual pattern
+        for pattern in virtual_patterns:
+            if pattern in interface_lower:
+                return False
+
+        return True
+
     def _normalize_neighbor_hostnames(self):
-        """Normalize LLDP identities to match configured hostnames"""
+        """Normalize LLDP identities to match configured hostnames and filter virtual interfaces"""
+        filtered_neighbors = []
+
         for neighbor in self.neighbors:
+            # Filter out virtual interfaces
+            if not self._is_physical_interface(neighbor.local_port):
+                self.logger.debug(f"Filtering virtual interface: {neighbor.local_device}:{neighbor.local_port}")
+                continue
+
             # Normalize local device (should already match, but just in case)
             neighbor.local_device = self._find_matching_hostname(neighbor.local_device)
 
@@ -914,6 +954,16 @@ class LLDPDiscovery:
 
             if original_remote != neighbor.remote_device:
                 self.logger.debug(f"Normalized '{original_remote}' -> '{neighbor.remote_device}'")
+
+            filtered_neighbors.append(neighbor)
+
+        # Replace neighbors list with filtered version
+        original_count = len(self.neighbors)
+        self.neighbors = filtered_neighbors
+        filtered_count = original_count - len(filtered_neighbors)
+
+        if filtered_count > 0:
+            self.logger.info(f"Filtered {filtered_count} virtual interface connections")
 
     def export_to_json(self, output_file: str):
         """Export discovered topology to JSON"""
