@@ -1982,10 +1982,22 @@ Examples:
         return 0
 
     if args.test:
-        # Find specific device
+        # Find specific device - try exact match first, then normalized match
         device = next((d for d in discovery.devices if d.hostname == args.test), None)
+
+        # If no exact match, try normalized matching
+        if not device:
+            normalized_test = discovery._normalize_hostname(args.test)
+            for d in discovery.devices:
+                normalized_device = discovery._normalize_hostname(d.hostname)
+                if normalized_test == normalized_device or normalized_test in normalized_device or normalized_device in normalized_test:
+                    device = d
+                    print(f"Matched '{args.test}' to configured device '{d.hostname}'")
+                    break
+
         if not device:
             print(f"Error: Device '{args.test}' not found in configuration")
+            print(f"Available devices: {', '.join([d.hostname for d in discovery.devices])}")
             return 1
         success = discovery.test_device(device)
         return 0 if success else 1
