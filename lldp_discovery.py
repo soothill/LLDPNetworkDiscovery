@@ -119,11 +119,21 @@ class SSHConnection:
 
         try:
             stdin, stdout, stderr = self.client.exec_command(command, timeout=self.timeout, get_pty=request_pty)
-            exit_code = stdout.channel.recv_exit_status()
 
-            # Read output
-            stdout_data = stdout.read().decode('utf-8')
-            stderr_data = stderr.read().decode('utf-8')
+            # For MikroTik with PTY, read output first then get exit status
+            # This prevents hanging on recv_exit_status()
+            if request_pty and self.device.device_type == 'mikrotik':
+                # Read output first
+                stdout_data = stdout.read().decode('utf-8')
+                stderr_data = stderr.read().decode('utf-8')
+                # Then get exit status (should be immediate now)
+                exit_code = stdout.channel.recv_exit_status()
+            else:
+                # Normal flow: wait for exit status first
+                exit_code = stdout.channel.recv_exit_status()
+                # Read output
+                stdout_data = stdout.read().decode('utf-8')
+                stderr_data = stderr.read().decode('utf-8')
 
             # When get_pty=True, stderr is redirected to stdout, so we need to handle this
             # If stderr is empty but command failed, the error is in stdout
