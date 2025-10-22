@@ -110,6 +110,7 @@ class SSHConnection:
                     # Manually enable legacy algorithms by modifying Transport class defaults
                     # This is a workaround for older devices
                     import paramiko.transport as transport_module
+                    from paramiko.pkey import PKey
 
                     # Store original values
                     original_preferred_keys = transport_module.Transport._preferred_keys
@@ -117,6 +118,15 @@ class SSHConnection:
                     original_key_info = transport_module.Transport._key_info.copy()
 
                     try:
+                        # Re-enable ssh-rsa in _key_info if it's missing (disabled in paramiko 2.9+)
+                        if 'ssh-rsa' not in transport_module.Transport._key_info:
+                            try:
+                                from paramiko.rsakey import RSAKey
+                                transport_module.Transport._key_info['ssh-rsa'] = RSAKey
+                                self.logger.debug("Re-enabled ssh-rsa host key algorithm")
+                            except ImportError:
+                                self.logger.warning("Could not import RSAKey for ssh-rsa support")
+
                         # Build list of available host key algorithms
                         available_keys = [
                             'rsa-sha2-512',
@@ -131,11 +141,15 @@ class SSHConnection:
                         # Only add ssh-dss if it's supported (removed in newer paramiko)
                         if 'ssh-dss' in original_key_info:
                             available_keys.append('ssh-dss')
-
-                        # Ensure ssh-rsa is in the _key_info dict (re-enable if disabled)
-                        if 'ssh-rsa' not in transport_module.Transport._key_info and 'rsa-sha2-256' in transport_module.Transport._key_info:
-                            # Copy the RSA handler from rsa-sha2-256
-                            transport_module.Transport._key_info['ssh-rsa'] = transport_module.Transport._key_info['rsa-sha2-256']
+                        else:
+                            # Try to re-enable DSS
+                            try:
+                                from paramiko.dsskey import DSSKey
+                                transport_module.Transport._key_info['ssh-dss'] = DSSKey
+                                available_keys.append('ssh-dss')
+                                self.logger.debug("Re-enabled ssh-dss host key algorithm")
+                            except ImportError:
+                                self.logger.debug("ssh-dss not available in this paramiko version")
 
                         transport_module.Transport._preferred_keys = tuple(available_keys)
 
@@ -166,6 +180,7 @@ class SSHConnection:
                         # Restore original values
                         transport_module.Transport._preferred_keys = original_preferred_keys
                         transport_module.Transport._preferred_kex = original_preferred_kex
+                        transport_module.Transport._key_info = original_key_info
                 else:
                     raise
             self.logger.info(f"Successfully connected to {self.device.hostname} ({self.device.ip_address})")
