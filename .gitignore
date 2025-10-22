@@ -15,6 +15,7 @@ ENV/
 # Generated reports and diagrams
 *.csv
 *.html
+!sample_output.html
 *.png
 *.svg
 *.pdf
