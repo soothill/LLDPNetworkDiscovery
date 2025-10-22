@@ -1147,6 +1147,8 @@ class LLDPDiscovery:
                 'speed_class': self._get_speed_class(neighbor.local_port_speed)
             })
 
+        self.logger.info(f"HTML: Including {len(connections)} connections in visualization")
+
         # Generate HTML
         html_content = f'''<!DOCTYPE html>
 <html lang="en">
