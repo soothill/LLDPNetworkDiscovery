@@ -1709,8 +1709,10 @@ Examples:
                        help='Output file for network visualization (default: network_topology.png)')
     parser.add_argument('--no-graph', action='store_true',
                        help='Skip generating graphical visualization')
-    parser.add_argument('--html', default=None,
-                       help='Generate interactive HTML visualization (e.g., --html topology.html)')
+    parser.add_argument('--html', default='network_topology.html',
+                       help='Generate interactive HTML visualization (default: network_topology.html, use --no-html to disable)')
+    parser.add_argument('--no-html', action='store_true',
+                       help='Skip generating HTML visualization')
     parser.add_argument('--verbose', '-v', action='store_true',
                        help='Enable verbose logging')
 
@@ -1760,8 +1762,8 @@ Examples:
     if not args.no_graph:
         discovery.visualize_topology(args.graph)
 
-    # Generate HTML visualization if requested
-    if args.html:
+    # Generate HTML visualization by default (unless --no-html is specified)
+    if not args.no_html and args.html:
         discovery.generate_html_visualization(args.html)
 
     return 0
