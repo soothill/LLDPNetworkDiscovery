@@ -389,64 +389,99 @@ class LLDPParser:
 
     @staticmethod
     def parse_mikrotik(output: str, hostname: str) -> List[LLDPNeighbor]:
-        """Parse LLDP output from MikroTik using /interface lldp-neighbors print detail
+        """Parse LLDP output from MikroTik using /ip neighbor print
 
-        Expected format (detail output):
-         0 interface=ether1 mac-address=XX:XX:XX:XX:XX:XX identity="SwitchName"
-           interface-name="Port1" system-description="..."
+        Expected format when LLDP neighbors are present:
+        Columns: INTERFACE, ADDRESS, MAC-ADDRESS, IDENTITY, VERSION
+         #  INTERFACE      ADDRESS        MAC-ADDRESS        IDENTITY           VERSION
+         0  ether1         10.10.201.5    94:F1:28:8A:93:A1  2930F-48
+            bridge
+         5  sfp-sfpplus21  fe80::4aa9...  48:A9:8A:D7:66:31  MikroTik RB5009    7.19.1 (stable)
+            trunk
         """
         neighbors = []
         lines = output.split('\n')
 
         print(f"DEBUG: Parsing MikroTik output for {hostname}")
+        print(f"DEBUG: Output length: {len(output)} chars")
         print(f"DEBUG: First 500 chars: {output[:500]}")
 
-        current_entry = {}
+        # Check if output has IDENTITY column (means LLDP neighbors exist)
+        has_identity = False
+        header_line_idx = -1
+        for i, line in enumerate(lines):
+            if 'INTERFACE' in line:
+                header_line_idx = i
+                if 'IDENTITY' in line:
+                    has_identity = True
+                    print(f"DEBUG: Found header with IDENTITY column at line {i}")
+                else:
+                    print(f"DEBUG: Found header WITHOUT IDENTITY column at line {i} - no LLDP neighbors")
+                break
 
-        for line in lines:
-            line = line.strip()
+        if not has_identity:
+            print(f"DEBUG: No LLDP neighbors found for {hostname} (IDENTITY column missing)")
+            return neighbors
 
-            # Skip empty lines and headers
-            if not line or line.startswith('Flags:') or line.startswith('Columns:'):
+        # Parse the data lines
+        # We need to find which column is IDENTITY by looking at the header
+        for i in range(header_line_idx + 1, len(lines)):
+            line = lines[i]
+
+            # Skip empty lines
+            if not line.strip():
                 continue
 
-            # New entry starts with a number followed by space
-            if re.match(r'^\d+\s', line):
-                # Save previous entry
-                if current_entry.get('interface') and current_entry.get('identity'):
-                    print(f"DEBUG: Found neighbor - Interface: {current_entry['interface']}, Identity: {current_entry['identity']}")
-                    neighbors.append(LLDPNeighbor(
-                        local_device=hostname,
-                        local_port=current_entry['interface'],
-                        remote_device=current_entry['identity'],
-                        remote_port=current_entry.get('interface-name', ''),
-                        remote_description=current_entry.get('system-description', '')
-                    ))
+            # Look for numbered entries (starts with space, number, space)
+            match = re.match(r'^\s*(\d+)\s+(\S+)\s+(.*)', line)
+            if match:
+                entry_num = match.group(1)
+                interface = match.group(2)
+                rest = match.group(3)
 
-                # Start new entry
-                current_entry = {}
-                # Parse the rest of the line after the number
-                line = re.sub(r'^\d+\s+', '', line)
+                print(f"DEBUG: Parsing line {i}: entry={entry_num}, interface={interface}")
 
-            # Parse key=value pairs
-            # Handle quoted values: key="value with spaces"
-            # Handle unquoted values: key=value
-            for match in re.finditer(r'(\w+(?:-\w+)*)=(?:"([^"]*)"|(\S+))', line):
-                key = match.group(1)
-                value = match.group(2) if match.group(2) is not None else match.group(3)
-                current_entry[key] = value
-                print(f"DEBUG: Parsed {key}={value}")
+                # Split the rest by whitespace
+                fields = rest.split()
 
-        # Don't forget the last entry
-        if current_entry.get('interface') and current_entry.get('identity'):
-            print(f"DEBUG: Found neighbor - Interface: {current_entry['interface']}, Identity: {current_entry['identity']}")
-            neighbors.append(LLDPNeighbor(
-                local_device=hostname,
-                local_port=current_entry['interface'],
-                remote_device=current_entry['identity'],
-                remote_port=current_entry.get('interface-name', ''),
-                remote_description=current_entry.get('system-description', '')
-            ))
+                # Fields should be: ADDRESS, MAC-ADDRESS, IDENTITY, [VERSION...]
+                # ADDRESS could be IP or IPv6, MAC is XX:XX:XX:XX:XX:XX format
+                # IDENTITY is the first field that's not an IP or MAC
+
+                identity = None
+                for j, field in enumerate(fields):
+                    # Skip IP addresses
+                    if ':' in field and '::' in field:  # IPv6
+                        print(f"DEBUG:   Field {j}: '{field}' - skipping (IPv6)")
+                        continue
+                    if re.match(r'^\d+\.\d+\.\d+\.\d+$', field):  # IPv4
+                        print(f"DEBUG:   Field {j}: '{field}' - skipping (IPv4)")
+                        continue
+                    # Skip MAC addresses
+                    if re.match(r'^[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}', field):
+                        print(f"DEBUG:   Field {j}: '{field}' - skipping (MAC)")
+                        continue
+
+                    # This should be the identity
+                    identity = field
+                    print(f"DEBUG:   Field {j}: '{field}' - IDENTITY found!")
+                    break
+
+                if identity and interface:
+                    # Filter out virtual interfaces
+                    if not any(x in interface.lower() for x in ['vlan', 'bridge.']):
+                        print(f"DEBUG: Adding neighbor - Interface: {interface}, Identity: {identity}")
+                        neighbors.append(LLDPNeighbor(
+                            local_device=hostname,
+                            local_port=interface,
+                            remote_device=identity,
+                            remote_port='',  # Not available in this format
+                            remote_description=''
+                        ))
+                    else:
+                        print(f"DEBUG: Skipping virtual interface: {interface}")
+                else:
+                    print(f"DEBUG: Could not find identity in line: {line}")
 
         print(f"DEBUG: Total neighbors found for {hostname}: {len(neighbors)}")
         return neighbors
@@ -731,7 +766,7 @@ class LLDPDiscovery:
         # Device-specific LLDP commands
         lldp_commands = {
             'linux': 'sudo lldpctl',
-            'mikrotik': '/interface lldp-neighbors print detail without-paging',
+            'mikrotik': '/ip neighbor print without-paging',
             'arista': 'show lldp neighbors detail',
             'aruba': 'show lldp neighbors detail',
             'ruijie': 'show lldp neighbors detail',
