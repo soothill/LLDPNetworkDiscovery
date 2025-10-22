@@ -155,11 +155,16 @@ class SSHConnection:
                             if not channel.recv_ready():
                                 break
 
+                # Debug: show raw output before stripping
+                print(f"DEBUG RAW: stdout length={len(stdout_data)}, repr={repr(stdout_data[:200])}")
+
                 # Strip ANSI escape sequences and control characters
                 # Pattern matches: ESC [ ... letter, and other control codes
                 ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
                 stdout_data = ansi_escape.sub('', stdout_data)
                 stderr_data = ansi_escape.sub('', stderr_data)
+
+                print(f"DEBUG AFTER STRIP: stdout length={len(stdout_data)}, first 200={repr(stdout_data[:200])}")
 
                 # Get exit status (should be available now)
                 if channel.exit_status_ready():
