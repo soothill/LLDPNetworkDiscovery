@@ -54,6 +54,7 @@ class DeviceConfig:
     password: Optional[str] = None
     ssh_key: Optional[str] = None
     port: int = 22
+    enable_password: Optional[str] = None  # For devices requiring enable mode (Aruba, Cisco, etc.)
 
 
 class SSHConnection:
@@ -194,6 +195,56 @@ class SSHConnection:
             return False
         except Exception as e:
             self.logger.error(f"Error connecting to {self.device.hostname}: {e}")
+            return False
+
+    def enter_enable_mode(self) -> bool:
+        """Enter enable/privileged mode on devices that require it (Aruba, Cisco, etc.)"""
+        if not self.device.enable_password:
+            return True  # No enable password configured, assume already in correct mode
+
+        try:
+            # Use invoke_shell for interactive enable mode
+            shell = self.client.invoke_shell()
+            shell.settimeout(5)
+
+            # Wait for initial prompt
+            import time
+            time.sleep(1)
+            output = shell.recv(4096).decode('utf-8', errors='ignore')
+            self.logger.debug(f"Initial prompt: {output[:100]}")
+
+            # Send enable command
+            shell.send('enable\n')
+            time.sleep(0.5)
+            output = shell.recv(4096).decode('utf-8', errors='ignore')
+
+            # Check if password prompt appeared
+            if 'password' in output.lower():
+                shell.send(self.device.enable_password + '\n')
+                time.sleep(0.5)
+                output = shell.recv(4096).decode('utf-8', errors='ignore')
+
+                # Check for success (# prompt) or failure
+                if '#' in output:
+                    self.logger.info(f"Successfully entered enable mode on {self.device.hostname}")
+                    shell.close()
+                    return True
+                else:
+                    self.logger.error(f"Enable password may be incorrect for {self.device.hostname}")
+                    shell.close()
+                    return False
+            elif '#' in output:
+                # Already in enable mode
+                self.logger.info(f"Already in enable mode on {self.device.hostname}")
+                shell.close()
+                return True
+            else:
+                self.logger.warning(f"Unexpected response when entering enable mode on {self.device.hostname}")
+                shell.close()
+                return True  # Continue anyway
+
+        except Exception as e:
+            self.logger.error(f"Error entering enable mode on {self.device.hostname}: {e}")
             return False
 
     def execute_command(self, command: str, request_pty: bool = None) -> Tuple[str, str, int]:
@@ -826,6 +877,13 @@ class LLDPDiscovery:
         if not ssh.connect():
             return False
 
+        # Enter enable mode for devices that require it
+        if device.device_type in ['aruba', 'arista', 'ruijie'] and device.enable_password:
+            if not ssh.enter_enable_mode():
+                self.logger.error(f"Failed to enter enable mode on {device.hostname}")
+                ssh.close()
+                return False
+
         # Test command execution
         test_commands = {
             'linux': 'uname -a',
@@ -874,6 +932,13 @@ class LLDPDiscovery:
         ssh = SSHConnection(device)
         if not ssh.connect():
             return []
+
+        # Enter enable mode for devices that require it (Aruba, Cisco-like devices)
+        if device.device_type in ['aruba', 'arista', 'ruijie'] and device.enable_password:
+            if not ssh.enter_enable_mode():
+                self.logger.error(f"Failed to enter enable mode on {device.hostname}")
+                ssh.close()
+                return []
 
         # Device-specific LLDP commands
         lldp_commands = {
