@@ -326,36 +326,44 @@ class SSHConnection:
             # Enter enable mode if needed (within same shell session)
             if enable_mode and self.device.enable_password:
                 self.logger.debug("Entering enable mode within shell session")
-                shell.send('enable\n')
-                time.sleep(0.5)
-                enable_output = shell.recv(65535).decode('utf-8', errors='ignore')
-
-                if 'password' in enable_output.lower():
-                    shell.send(self.device.enable_password + '\n')
+                try:
+                    shell.send('enable\n')
                     time.sleep(0.5)
-                    shell.recv(65535)  # Discard password response
-                    self.logger.debug("Enable password sent")
+                    enable_output = shell.recv(65535).decode('utf-8', errors='ignore')
+                    self.logger.debug(f"Enable response: {enable_output[:100]}")
+
+                    if 'password' in enable_output.lower():
+                        shell.send(self.device.enable_password + '\n')
+                        time.sleep(0.5)
+                        try:
+                            shell.recv(65535)  # Discard password response
+                            self.logger.debug("Enable password sent")
+                        except:
+                            pass
+                except Exception as e:
+                    self.logger.warning(f"Error entering enable mode: {e}")
 
             # Disable terminal paging for Aruba/Arista devices
             if self.device.device_type in ['aruba', 'arista', 'ruijie']:
                 self.logger.debug("Disabling paging with 'no page' command")
-                shell.send('no page\n')
-                time.sleep(0.5)
                 try:
+                    shell.send('no page\n')
+                    time.sleep(0.5)
                     shell.recv(65535)  # Discard output
-                except:
-                    pass
+                except Exception as e:
+                    self.logger.debug(f"Error disabling paging (non-critical): {e}")
 
             # Send command
             self.logger.debug(f"Sending command: {command}")
             shell.send(command + '\n')
-            time.sleep(0.5)
+            time.sleep(1.0)  # Give command more time to start executing
 
             # Collect output with timeout
             output = ""
             start_time = time.time()
-            max_wait = 15  # Maximum 15 seconds for command
+            max_wait = 20  # Maximum 20 seconds for command
             last_output_time = start_time
+            self.logger.debug("Collecting command output...")
 
             while (time.time() - start_time) < max_wait:
                 try:
