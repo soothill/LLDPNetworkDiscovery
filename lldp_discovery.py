@@ -2035,6 +2035,7 @@ def create_sample_config(filename: str = 'devices.json'):
                 "device_type": "arista",
                 "username": "admin",
                 "password": "your_password_here",
+                "enable_password": "your_enable_password_here",
                 "port": 22
             },
             {
@@ -2043,6 +2044,7 @@ def create_sample_config(filename: str = 'devices.json'):
                 "device_type": "aruba",
                 "username": "admin",
                 "password": "your_password_here",
+                "enable_password": "your_enable_password_here",
                 "port": 22
             },
             {
