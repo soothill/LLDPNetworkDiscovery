@@ -1917,28 +1917,7 @@ class LLDPDiscovery:
         <div class="main-content">
             <div class="topology-container">'''
 
-        # Calculate SVG size dynamically based on device count
-        svg_width = base_size * 2
-        svg_height = int(base_size * 1.6)
-
-        html_content += f'''
-                <svg width="{svg_width}" height="{svg_height}" viewBox="0 0 {svg_width} {svg_height}"'''
-
-        html_content += '''>
-                    <defs>
-                        <filter id="glow">
-                            <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
-                            <feMerge>
-                                <feMergeNode in="coloredBlur"/>
-                                <feMergeNode in="SourceGraphic"/>
-                            </feMerge>
-                        </filter>
-                    </defs>
-
-                    <g id="links">
-'''
-
-        # Collect all unique devices (configured + discovered via LLDP)
+        # Collect all unique devices (configured + discovered via LLDP) BEFORE creating SVG
         all_device_names = set()
         for device in self.devices:
             all_device_names.add(device.hostname)
@@ -1956,6 +1935,27 @@ class LLDPDiscovery:
         base_size = max(600, num_devices * 40)  # Larger canvas for more devices
         center_x, center_y = base_size, base_size * 0.8
         radius = min(base_size * 0.7, num_devices * 30)  # Radius grows with device count
+
+        # Calculate SVG size dynamically based on device count
+        svg_width = base_size * 2
+        svg_height = int(base_size * 1.6)
+
+        html_content += f'''
+                <svg width="{svg_width}" height="{svg_height}" viewBox="0 0 {svg_width} {svg_height}">
+                    <defs>
+                        <filter id="glow">
+                            <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
+                            <feMerge>
+                                <feMergeNode in="coloredBlur"/>
+                                <feMergeNode in="SourceGraphic"/>
+                            </feMerge>
+                        </filter>
+                    </defs>
+
+                    <g id="links">
+'''
+
+        # Calculate device positions
         device_positions = {}
 
         for i, device_name in enumerate(all_devices_sorted):
