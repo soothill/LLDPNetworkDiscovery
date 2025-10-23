@@ -1194,23 +1194,27 @@ class LLDPDiscovery:
             local_ports = list(set([n.local_port for n in neighbors]))
             self.logger.debug(f"Detecting speeds for ports: {local_ports}")
 
-            speed_detectors = {
-                'linux': PortSpeedDetector.get_port_speeds_linux,
-                'mikrotik': PortSpeedDetector.get_port_speeds_mikrotik,
-                'arista': PortSpeedDetector.get_port_speeds_arista,
-                'aruba': PortSpeedDetector.get_port_speeds_aruba,
-                'ruijie': PortSpeedDetector.get_port_speeds_ruijie,
-                'proxmox': PortSpeedDetector.get_port_speeds_proxmox
-            }
-
-            speed_detector = speed_detectors.get(device.device_type)
-            if speed_detector:
-                port_speeds = speed_detector(ssh, local_ports)
-
-                # Assign speeds to neighbors
+            # Skip speed detection for Aruba/Arista/Ruijie - they close SSH after first shell
+            # TODO: Integrate speed detection into same shell session as LLDP collection
+            if device.device_type in ['aruba', 'arista', 'ruijie']:
+                self.logger.info(f"Skipping speed detection for {device.device_type} (SSH session closed)")
                 for neighbor in neighbors:
-                    neighbor.local_port_speed = port_speeds.get(neighbor.local_port, "Unknown")
-                    self.logger.debug(f"{neighbor.local_port} speed: {neighbor.local_port_speed}")
+                    neighbor.local_port_speed = "Unknown"
+            else:
+                speed_detectors = {
+                    'linux': PortSpeedDetector.get_port_speeds_linux,
+                    'mikrotik': PortSpeedDetector.get_port_speeds_mikrotik,
+                    'proxmox': PortSpeedDetector.get_port_speeds_proxmox
+                }
+
+                speed_detector = speed_detectors.get(device.device_type)
+                if speed_detector:
+                    port_speeds = speed_detector(ssh, local_ports)
+
+                    # Assign speeds to neighbors
+                    for neighbor in neighbors:
+                        neighbor.local_port_speed = port_speeds.get(neighbor.local_port, "Unknown")
+                        self.logger.debug(f"{neighbor.local_port} speed: {neighbor.local_port_speed}")
 
         ssh.close()
         self.logger.info(f"Found {len(neighbors)} LLDP neighbors on {device.hostname}")
