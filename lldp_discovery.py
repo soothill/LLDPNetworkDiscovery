@@ -294,7 +294,7 @@ class SSHConnection:
 
         Args:
             command: Command to execute
-            enable_mode: Whether device is in enable mode (affects prompt detection)
+            enable_mode: Whether device requires enable mode (will enter it if needed)
         """
         if not self.client:
             return "", "Not connected", 1
@@ -322,6 +322,19 @@ class SSHConnection:
                         pass
             except:
                 initial_output = ""
+
+            # Enter enable mode if needed (within same shell session)
+            if enable_mode and self.device.enable_password:
+                self.logger.debug("Entering enable mode within shell session")
+                shell.send('enable\n')
+                time.sleep(0.5)
+                enable_output = shell.recv(65535).decode('utf-8', errors='ignore')
+
+                if 'password' in enable_output.lower():
+                    shell.send(self.device.enable_password + '\n')
+                    time.sleep(0.5)
+                    shell.recv(65535)  # Discard password response
+                    self.logger.debug("Enable password sent")
 
             # Disable terminal paging for Aruba/Arista devices
             if self.device.device_type in ['aruba', 'arista', 'ruijie']:
@@ -988,14 +1001,8 @@ class LLDPDiscovery:
         if not ssh.connect():
             return False
 
-        # Enter enable mode for devices that require it
-        if device.device_type in ['aruba', 'arista', 'ruijie'] and device.enable_password:
-            if not ssh.enter_enable_mode():
-                self.logger.error(f"Failed to enter enable mode on {device.hostname}")
-                ssh.close()
-                return False
-
         # Test command execution
+        # Note: enable mode is now handled within execute_shell_command()
         test_commands = {
             'linux': 'uname -a',
             'mikrotik': '/system identity print',
@@ -1058,14 +1065,8 @@ class LLDPDiscovery:
         if not ssh.connect():
             return []
 
-        # Enter enable mode for devices that require it (Aruba, Cisco-like devices)
-        if device.device_type in ['aruba', 'arista', 'ruijie'] and device.enable_password:
-            if not ssh.enter_enable_mode():
-                self.logger.error(f"Failed to enter enable mode on {device.hostname}")
-                ssh.close()
-                return []
-
         # Device-specific LLDP commands
+        # Note: enable mode is now handled within execute_shell_command()
         lldp_commands = {
             'linux': 'sudo lldpctl',
             'mikrotik': '/ip neighbor print detail without-paging where identity!=""',
