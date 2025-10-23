@@ -101,7 +101,7 @@ class SSHConnection:
                 self.client.connect(**connect_params)
             except paramiko.SSHException as e:
                 if 'no acceptable host key' in str(e).lower() or 'incompatible' in str(e).lower():
-                    self.logger.info(f"Retrying {self.device.hostname} with legacy SSH algorithms enabled...")
+                    self.logger.debug(f"Retrying {self.device.hostname} with legacy SSH algorithms enabled...")
 
                     # Close and recreate client
                     self.client.close()
@@ -184,7 +184,7 @@ class SSHConnection:
                         transport_module.Transport._key_info = original_key_info
                 else:
                     raise
-            self.logger.info(f"Successfully connected to {self.device.hostname} ({self.device.ip_address})")
+            self.logger.debug(f"Successfully connected to {self.device.hostname} ({self.device.ip_address})")
             return True
 
         except paramiko.AuthenticationException:
@@ -233,7 +233,7 @@ class SSHConnection:
 
                 # Check for success (# prompt) or failure
                 if '#' in output:
-                    self.logger.info(f"Successfully entered enable mode on {self.device.hostname}")
+                    self.logger.debug(f"Successfully entered enable mode on {self.device.hostname}")
                     shell.close()
                     return True
                 else:
@@ -242,7 +242,7 @@ class SSHConnection:
                     return False
             elif '#' in output:
                 # Already in enable mode
-                self.logger.info(f"Already in enable mode on {self.device.hostname}")
+                self.logger.debug(f"Already in enable mode on {self.device.hostname}")
                 shell.close()
                 return True
             else:
@@ -288,6 +288,128 @@ class SSHConnection:
         except Exception as e:
             self.logger.error(f"Error executing command on {self.device.hostname}: {e}")
             return "", str(e), 1
+
+    def execute_shell_commands(self, commands: List[str], enable_mode: bool = False) -> List[Tuple[str, str, int]]:
+        """Execute multiple commands in the same shell session (for devices like Aruba)
+
+        Args:
+            commands: List of commands to execute
+            enable_mode: Whether device requires enable mode
+
+        Returns:
+            List of (stdout, stderr, exit_code) tuples, one per command
+        """
+        if not self.client:
+            return [(("", "Not connected", 1))] * len(commands)
+
+        results = []
+
+        try:
+            import time
+            shell = self.client.invoke_shell(width=200, height=100)
+            shell.settimeout(3)
+
+            # Wait for prompt and clear any initial output
+            time.sleep(1)
+            try:
+                initial_output = shell.recv(65535).decode('utf-8', errors='ignore')
+                self.logger.debug(f"Initial shell output: {initial_output[:200]}")
+
+                # Check if there's a banner requiring space/enter to continue
+                if '-- more --' in initial_output.lower() or 'press any key' in initial_output.lower():
+                    self.logger.debug("Detected banner screen, sending space to continue")
+                    shell.send(' ')
+                    time.sleep(0.5)
+                    try:
+                        shell.recv(65535)
+                    except:
+                        pass
+            except:
+                initial_output = ""
+
+            # Enter enable mode if needed (within same shell session)
+            if enable_mode and self.device.enable_password:
+                self.logger.debug("Entering enable mode within shell session")
+                try:
+                    shell.send('enable\n')
+                    time.sleep(0.5)
+                    enable_output = shell.recv(65535).decode('utf-8', errors='ignore')
+                    self.logger.debug(f"Enable response: {enable_output[:100]}")
+
+                    if 'password' in enable_output.lower():
+                        shell.send(self.device.enable_password + '\n')
+                        time.sleep(0.5)
+                        try:
+                            shell.recv(65535)
+                            self.logger.debug("Enable password sent")
+                        except:
+                            pass
+                except Exception as e:
+                    self.logger.warning(f"Error entering enable mode: {e}")
+
+            # Disable terminal paging for Aruba/Arista devices
+            if self.device.device_type in ['aruba', 'arista', 'ruijie']:
+                self.logger.debug("Disabling paging with 'no page' command")
+                try:
+                    shell.send('no page\n')
+                    time.sleep(0.5)
+                    shell.recv(65535)
+                except Exception as e:
+                    self.logger.debug(f"Error disabling paging (non-critical): {e}")
+
+            # Execute each command in sequence
+            for command in commands:
+                self.logger.debug(f"Sending command: {command}")
+                shell.send(command + '\n')
+                time.sleep(1.0)
+
+                # Collect output with timeout
+                output = ""
+                start_time = time.time()
+                max_wait = 20
+                last_output_time = start_time
+
+                while (time.time() - start_time) < max_wait:
+                    try:
+                        chunk = shell.recv(65535).decode('utf-8', errors='ignore')
+                        if chunk:
+                            output += chunk
+                            last_output_time = time.time()
+
+                            lines = output.strip().split('\n')
+                            if lines and (lines[-1].strip().endswith('>') or lines[-1].strip().endswith('#')):
+                                self.logger.debug(f"Found prompt, command complete")
+                                break
+                        else:
+                            if (time.time() - last_output_time) > 2:
+                                self.logger.debug("No data for 2 seconds, assuming command complete")
+                                break
+                            time.sleep(0.1)
+                    except Exception as e:
+                        if output and (time.time() - last_output_time) > 1:
+                            self.logger.debug(f"Recv timeout/exception after getting data: {e}")
+                            break
+                        time.sleep(0.1)
+
+                # Clean up output
+                lines = output.split('\n')
+                if len(lines) > 2:
+                    cleaned_output = '\n'.join(lines[1:-1])
+                else:
+                    cleaned_output = output
+
+                exit_code = 0 if cleaned_output.strip() else 1
+                results.append((cleaned_output, "", exit_code))
+
+            shell.close()
+            return results
+
+        except Exception as e:
+            self.logger.error(f"Error executing shell commands on {self.device.hostname}: {e}")
+            import traceback
+            self.logger.error(f"Traceback: {traceback.format_exc()}")
+            # Return error results for all remaining commands
+            return results + [("", str(e), 1)] * (len(commands) - len(results))
 
     def execute_shell_command(self, command: str, enable_mode: bool = False) -> Tuple[str, str, int]:
         """Execute command using interactive shell (for devices like Aruba that need it)
@@ -603,6 +725,89 @@ class PortSpeedDetector:
     def get_port_speeds_proxmox(ssh: SSHConnection, ports: List[str]) -> Dict[str, str]:
         """Get port speeds for Proxmox hosts (same as Linux)"""
         return PortSpeedDetector.get_port_speeds_linux(ssh, ports)
+
+    @staticmethod
+    def parse_arista_speeds(output: str, ports: List[str]) -> Dict[str, str]:
+        """Parse Arista speed output from pre-collected 'show interfaces status' output"""
+        speeds = {}
+
+        for line in output.split('\n'):
+            # Parse output like: "Et1    connected    1        full    1G     1000baseT"
+            parts = line.split()
+            if len(parts) >= 6:
+                interface = parts[0]
+                # Match any port in our list
+                for port in ports:
+                    if port in interface or interface in port:
+                        speed = parts[5]  # Speed column
+                        speeds[port] = speed
+                        break
+
+        # Fill in unknowns
+        for port in ports:
+            if port not in speeds:
+                speeds[port] = "Unknown"
+
+        return speeds
+
+    @staticmethod
+    def parse_aruba_speeds(output: str, ports: List[str]) -> Dict[str, str]:
+        """Parse HP Aruba speed output from pre-collected 'show interfaces brief' output"""
+        speeds = {}
+
+        for line in output.split('\n'):
+            # Parse Aruba output
+            parts = line.split()
+            if len(parts) >= 3:
+                port_name = parts[0]
+                for port in ports:
+                    if port in port_name or port_name in port:
+                        # Speed is usually in format like "1000FDx" or "10GigFD"
+                        if 'Up' in line:
+                            speed_match = re.search(r'(\d+(?:G|M)?(?:ig)?(?:FD|HD|x)?)', line)
+                            if speed_match:
+                                speeds[port] = speed_match.group(1)
+                            else:
+                                speeds[port] = "Link Up"
+                        break
+
+        # Fill in unknowns
+        for port in ports:
+            if port not in speeds:
+                speeds[port] = "Unknown"
+
+        return speeds
+
+    @staticmethod
+    def parse_ruijie_speeds(output: str, ports: List[str]) -> Dict[str, str]:
+        """Parse Ruijie speed output from pre-collected 'show interfaces status' output"""
+        speeds = {}
+
+        for line in output.split('\n'):
+            # Parse Ruijie output similar to Cisco format
+            parts = line.split()
+            if len(parts) >= 4:
+                interface = parts[0]
+                for port in ports:
+                    if port in interface or interface in port:
+                        # Speed is typically in format like "1000" or "10G"
+                        if 'connected' in line.lower() or 'up' in line.lower():
+                            speed_match = re.search(r'(\d+(?:G|M)?)', line)
+                            if speed_match:
+                                speed_str = speed_match.group(1)
+                                # Convert to standard format
+                                if speed_str.isdigit():
+                                    speeds[port] = PortSpeedDetector._format_speed(int(speed_str))
+                                else:
+                                    speeds[port] = speed_str
+                        break
+
+        # Fill in unknowns
+        for port in ports:
+            if port not in speeds:
+                speeds[port] = "Unknown"
+
+        return speeds
 
     @staticmethod
     def _format_speed(speed_mbps: int) -> str:
@@ -1052,7 +1257,7 @@ class LLDPDiscovery:
         }
 
         command = test_commands.get(device.device_type, 'echo test')
-        self.logger.info(f"Executing test command on {device.hostname}: {command}")
+        self.logger.debug(f"Executing test command on {device.hostname}: {command}")
 
         # Use shell-based execution for devices that need interactive mode
         if device.device_type in ['aruba', 'arista', 'ruijie']:
@@ -1064,12 +1269,12 @@ class LLDPDiscovery:
 
         ssh.close()
 
-        self.logger.info(f"Command exit code: {exit_code}")
-        self.logger.info(f"Output length: {len(stdout)} chars, Error length: {len(stderr)} chars")
+        self.logger.debug(f"Command exit code: {exit_code}")
+        self.logger.debug(f"Output length: {len(stdout)} chars, Error length: {len(stderr)} chars")
 
         if exit_code == 0:
             self.logger.info(f"✓ {device.hostname} - Connection successful")
-            self.logger.info(f"Output: {stdout[:200]}")  # Show first 200 chars
+            self.logger.debug(f"Output: {stdout[:200]}")  # Show first 200 chars
             return True
         else:
             self.logger.error(f"✗ {device.hostname} - Command execution failed")
@@ -1121,17 +1326,36 @@ class LLDPDiscovery:
             ssh.close()
             return []
 
-        self.logger.info(f"Executing LLDP command on {device.hostname}: {command}")
+        self.logger.debug(f"Executing LLDP command on {device.hostname}: {command}")
+
+        # For interactive devices, also get speed command to run both in same shell session
+        speed_command = None
+        if device.device_type in ['aruba', 'arista', 'ruijie']:
+            speed_commands_map = {
+                'aruba': 'show interfaces brief',
+                'arista': 'show interfaces status',
+                'ruijie': 'show interfaces status'
+            }
+            speed_command = speed_commands_map.get(device.device_type)
 
         # Use shell-based execution for devices that need interactive mode
         if device.device_type in ['aruba', 'arista', 'ruijie']:
             self.logger.debug(f"Using shell-based execution for {device.device_type} device")
-            stdout, stderr, exit_code = ssh.execute_shell_command(command, enable_mode=True)
+            if speed_command:
+                # Execute both LLDP and speed commands in same shell session
+                self.logger.debug(f"Executing LLDP and speed commands in same session")
+                results = ssh.execute_shell_commands([command, speed_command], enable_mode=True)
+                stdout, stderr, exit_code = results[0]  # LLDP output
+                speed_stdout, speed_stderr, speed_exit_code = results[1] if len(results) > 1 else ("", "", 1)
+            else:
+                stdout, stderr, exit_code = ssh.execute_shell_command(command, enable_mode=True)
+                speed_stdout = ""
         else:
             # Use regular exec_command for Linux, MikroTik, Proxmox
             self.logger.debug(f"Using exec_command for {device.device_type} device")
             request_pty = False  # Don't use PTY for any device by default (only sudo needs it)
             stdout, stderr, exit_code = ssh.execute_command(command, request_pty=request_pty)
+            speed_stdout = ""
 
         if exit_code != 0:
             self.logger.error(f"LLDP command failed on {device.hostname}")
@@ -1170,8 +1394,8 @@ class LLDPDiscovery:
             ssh.close()
             return []
 
-        self.logger.info(f"LLDP command succeeded on {device.hostname}")
-        self.logger.info(f"  Output length: {len(stdout)} chars")
+        self.logger.debug(f"LLDP command succeeded on {device.hostname}")
+        self.logger.debug(f"  Output length: {len(stdout)} chars")
         self.logger.debug(f"  First 500 chars of output: {stdout[:500]}")
 
         # Parse output based on device type
@@ -1187,20 +1411,38 @@ class LLDPDiscovery:
         parser = parsers.get(device.device_type)
         neighbors = parser(stdout, device.hostname)
 
-        self.logger.info(f"  Parsed {len(neighbors)} LLDP neighbors from {device.hostname}")
+        self.logger.debug(f"  Parsed {len(neighbors)} LLDP neighbors from {device.hostname}")
 
         # Get port speeds for local ports
         if neighbors:
             local_ports = list(set([n.local_port for n in neighbors]))
             self.logger.debug(f"Detecting speeds for ports: {local_ports}")
 
-            # Skip speed detection for Aruba/Arista/Ruijie - they close SSH after first shell
-            # TODO: Integrate speed detection into same shell session as LLDP collection
+            # For interactive devices (Aruba/Arista/Ruijie), use the pre-collected speed output
             if device.device_type in ['aruba', 'arista', 'ruijie']:
-                self.logger.info(f"Skipping speed detection for {device.device_type} (SSH session closed)")
-                for neighbor in neighbors:
-                    neighbor.local_port_speed = "Unknown"
+                if speed_stdout and speed_command:
+                    self.logger.debug(f"Parsing speed data from same shell session for {device.device_type}")
+                    # Parse the speed output directly instead of executing new commands
+                    speed_parsers = {
+                        'aruba': PortSpeedDetector.parse_aruba_speeds,
+                        'arista': PortSpeedDetector.parse_arista_speeds,
+                        'ruijie': PortSpeedDetector.parse_ruijie_speeds
+                    }
+
+                    speed_parser = speed_parsers.get(device.device_type)
+                    if speed_parser:
+                        port_speeds = speed_parser(speed_stdout, local_ports)
+
+                        # Assign speeds to neighbors
+                        for neighbor in neighbors:
+                            neighbor.local_port_speed = port_speeds.get(neighbor.local_port, "Unknown")
+                            self.logger.debug(f"{neighbor.local_port} speed: {neighbor.local_port_speed}")
+                else:
+                    self.logger.warning(f"No speed data collected for {device.device_type}")
+                    for neighbor in neighbors:
+                        neighbor.local_port_speed = "Unknown"
             else:
+                # For non-interactive devices, use existing speed detection methods
                 speed_detectors = {
                     'linux': PortSpeedDetector.get_port_speeds_linux,
                     'mikrotik': PortSpeedDetector.get_port_speeds_mikrotik,
@@ -1217,7 +1459,7 @@ class LLDPDiscovery:
                         self.logger.debug(f"{neighbor.local_port} speed: {neighbor.local_port_speed}")
 
         ssh.close()
-        self.logger.info(f"Found {len(neighbors)} LLDP neighbors on {device.hostname}")
+        self.logger.info(f"✓ {device.hostname} - Found {len(neighbors)} LLDP neighbors")
         return neighbors
 
     def discover_topology(self) -> bool:
@@ -1302,7 +1544,7 @@ class LLDPDiscovery:
         filtered_count = original_count - len(filtered_neighbors)
 
         if filtered_count > 0:
-            self.logger.info(f"Filtered {filtered_count} virtual interface connections")
+            self.logger.debug(f"Filtered {filtered_count} virtual interface connections")
 
     def export_to_json(self, output_file: str):
         """Export discovered topology to JSON"""
@@ -1511,7 +1753,7 @@ class LLDPDiscovery:
                 'speed_class': self._get_speed_class(neighbor.local_port_speed)
             })
 
-        self.logger.info(f"HTML: Including {len(connections)} connections in visualization")
+        self.logger.debug(f"HTML: Including {len(connections)} connections in visualization")
 
         # Generate HTML
         html_content = f'''<!DOCTYPE html>
@@ -1943,7 +2185,7 @@ class LLDPDiscovery:
         all_devices_sorted = sorted(all_device_names)
         num_devices = len(all_devices_sorted)
 
-        self.logger.info(f"HTML: Displaying {num_devices} devices ({len(self.devices)} configured, {num_devices - len(self.devices)} discovered)")
+        self.logger.debug(f"HTML: Displaying {num_devices} devices ({len(self.devices)} configured, {num_devices - len(self.devices)} discovered)")
 
         # Adaptive circular layout for nodes - scales with device count
         # Base size that scales with number of devices
@@ -2211,6 +2453,499 @@ class LLDPDiscovery:
 
         self.logger.info(f"Interactive HTML visualization saved to {output_file}")
 
+    def visualize_d3_interactive(self, output_file: str = 'network_topology_d3.html'):
+        """Generate interactive D3.js force-directed graph visualization with draggable nodes"""
+
+        # Collect all unique devices (configured + discovered)
+        all_device_names = set([d.hostname for d in self.devices])
+        for neighbor in self.neighbors:
+            all_device_names.add(neighbor.local_device)
+            all_device_names.add(neighbor.remote_device)
+
+        # Prepare connections data
+        connections = []
+        seen_connections = set()
+
+        for neighbor in self.neighbors:
+            # Create bidirectional key to avoid duplicates
+            key1 = (neighbor.local_device, neighbor.remote_device, neighbor.local_port, neighbor.remote_port)
+            key2 = (neighbor.remote_device, neighbor.local_device, neighbor.remote_port, neighbor.local_port)
+
+            if key1 not in seen_connections and key2 not in seen_connections:
+                seen_connections.add(key1)
+                connections.append({
+                    'local_device': neighbor.local_device,
+                    'local_port': neighbor.local_port,
+                    'remote_device': neighbor.remote_device,
+                    'remote_port': neighbor.remote_port,
+                    'local_speed': neighbor.local_port_speed or 'Unknown',
+                    'remote_speed': neighbor.remote_port_speed or 'Unknown'
+                })
+
+        self.logger.debug(f"D3: Including {len(connections)} connections in visualization")
+
+        # Generate HTML with D3.js
+        html_content = f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Network Topology - Interactive D3 Graph</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+    <style>
+        body {{
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }}
+        h1 {{
+            text-align: center;
+            color: white;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+            margin-bottom: 20px;
+        }}
+        #mynetwork {{
+            width: 100%;
+            height: 700px;
+            border: 2px solid rgba(255,255,255,0.3);
+            background: linear-gradient(to bottom, #1a1a2e, #16213e);
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+            border-radius: 10px;
+            cursor: grab;
+            margin-bottom: 20px;
+        }}
+        #mynetwork:active {{
+            cursor: grabbing;
+        }}
+        .legend {{
+            margin: 20px auto;
+            padding: 20px;
+            background: rgba(255, 255, 255, 0.95);
+            border: 1px solid rgba(255,255,255,0.3);
+            border-radius: 10px;
+            max-width: 900px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+        }}
+        .legend h3 {{
+            margin-top: 0;
+            color: #333;
+        }}
+        .legend-item {{
+            display: inline-block;
+            margin-right: 25px;
+            margin-bottom: 10px;
+        }}
+        .legend-line {{
+            display: inline-block;
+            width: 50px;
+            height: 4px;
+            vertical-align: middle;
+            margin-right: 8px;
+            border-radius: 2px;
+        }}
+        .device-info {{
+            margin: 20px auto 20px;
+            padding: 20px;
+            background: rgba(255, 255, 255, 0.95);
+            border: 1px solid rgba(255,255,255,0.3);
+            border-radius: 10px;
+            max-width: 900px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+        }}
+        .device-info h3 {{
+            margin-top: 0;
+            color: #333;
+        }}
+        .stats {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 10px;
+        }}
+        .stat-box {{
+            padding: 15px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 8px;
+            color: white;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+        }}
+        .stat-label {{
+            font-size: 12px;
+            opacity: 0.9;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }}
+        .stat-value {{
+            font-size: 32px;
+            font-weight: bold;
+            margin-top: 5px;
+        }}
+        .link {{
+            stroke-opacity: 0.7;
+            stroke-width: 2px;
+        }}
+        .link:hover {{
+            stroke-opacity: 1;
+            stroke-width: 4px;
+        }}
+        .node {{
+            cursor: grab;
+            filter: drop-shadow(3px 3px 5px rgba(0,0,0,0.5));
+        }}
+        .node:active {{
+            cursor: grabbing;
+        }}
+        .node:hover {{
+            filter: drop-shadow(4px 4px 8px rgba(0,0,0,0.8));
+        }}
+        .node text {{
+            font-size: 11px;
+            font-weight: 600;
+            pointer-events: none;
+            text-anchor: middle;
+            fill: white;
+            text-shadow: 1px 1px 3px rgba(0,0,0,0.9);
+        }}
+        .tooltip {{
+            position: absolute;
+            background: rgba(0, 0, 0, 0.9);
+            color: white;
+            padding: 12px 15px;
+            border-radius: 6px;
+            pointer-events: none;
+            font-size: 13px;
+            display: none;
+            z-index: 1000;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            border: 1px solid rgba(255,255,255,0.2);
+        }}
+        .controls {{
+            text-align: center;
+            margin: 20px auto;
+            max-width: 900px;
+        }}
+        .btn {{
+            background: rgba(255, 255, 255, 0.95);
+            border: 2px solid rgba(255,255,255,0.3);
+            padding: 10px 20px;
+            margin: 5px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            color: #667eea;
+        }}
+        .btn:hover {{
+            background: white;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+            transform: translateY(-2px);
+        }}
+    </style>
+</head>
+<body>
+    <h1>🌐 Network Topology - Interactive Graph</h1>
+
+    <div class="device-info">
+        <h3>Network Statistics</h3>
+        <div class="stats">
+            <div class="stat-box">
+                <div class="stat-label">Total Devices</div>
+                <div class="stat-value" id="deviceCount">0</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-label">Total Connections</div>
+                <div class="stat-value" id="connectionCount">0</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-label">Network Devices</div>
+                <div class="stat-value" id="switchCount">0</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="controls">
+        <button class="btn" onclick="resetSimulation()">🔄 Reset Layout</button>
+        <button class="btn" onclick="zoomIn()">🔍+ Zoom In</button>
+        <button class="btn" onclick="zoomOut()">🔍- Zoom Out</button>
+        <button class="btn" onclick="resetZoom()">↔️ Reset Zoom</button>
+    </div>
+
+    <div id="mynetwork"></div>
+    <div class="tooltip" id="tooltip"></div>
+
+    <div class="legend">
+        <h3>Legend</h3>
+        <div style="margin-bottom: 15px;">
+            <strong>Connection Speeds:</strong><br>
+            <div class="legend-item">
+                <span class="legend-line" style="background-color: #e74c3c;"></span>
+                <span>Unknown Speed</span>
+            </div>
+            <div class="legend-item">
+                <span class="legend-line" style="background-color: #3498db;"></span>
+                <span>1 Gbps</span>
+            </div>
+            <div class="legend-item">
+                <span class="legend-line" style="background-color: #2ecc71;"></span>
+                <span>10 Gbps</span>
+            </div>
+            <div class="legend-item">
+                <span class="legend-line" style="background-color: #9b59b6;"></span>
+                <span>Other Speeds</span>
+            </div>
+        </div>
+        <p style="margin-top: 15px; color: #666; font-size: 14px;">
+            <strong>Device Types:</strong>
+            <span style="color: #3498db;">●</span> Switches/Arista/Aruba |
+            <span style="color: #27ae60;">●</span> MikroTik |
+            <span style="color: #e67e22;">●</span> Proxmox/Linux |
+            <span style="color: #95a5a6;">●</span> Others
+        </p>
+        <p style="color: #666; font-size: 14px; margin-top: 10px;">
+            💡 <strong>Tip:</strong> Drag nodes to reposition • Scroll to zoom • Hover for details • Nodes have rubber-band physics!
+        </p>
+    </div>
+
+    <script>
+        // Network topology data
+        const topologyData = {{
+            "devices": {json.dumps(sorted(all_device_names))},
+            "connections": {json.dumps(connections)}
+        }};
+
+        // Helper functions
+        function getDeviceColor(deviceName) {{
+            const name = deviceName.toLowerCase();
+            if (name.includes('mikrotik')) return '#27ae60';
+            if (name.includes('2930') || name.includes('2520') || name.includes('arista') ||
+                name.includes('aruba') || name.includes('switch') || name.includes('crs')) return '#3498db';
+            if (name.includes('proxmox') || name.includes('linux') || name.includes('nas')) return '#e67e22';
+            return '#95a5a6';
+        }}
+
+        function getNodeSize(deviceName) {{
+            const name = deviceName.toLowerCase();
+            if (name.includes('crs326') || name.includes('2930f-48') || name.includes('arista')) return 30;
+            if (name.includes('mikrotik') || name.includes('2520') || name.includes('aruba')) return 25;
+            return 20;
+        }}
+
+        function getEdgeColor(speed) {{
+            if (!speed || speed === 'Unknown') return '#e74c3c';
+            if (speed.includes('1G') || speed.includes('1000')) return '#3498db';
+            if (speed.includes('10G') || speed.includes('10000')) return '#2ecc71';
+            return '#9b59b6';
+        }}
+
+        // Collect all unique devices
+        const allDevices = new Set(topologyData.devices);
+        topologyData.connections.forEach(conn => {{
+            allDevices.add(conn.local_device);
+            allDevices.add(conn.remote_device);
+        }});
+
+        // Create nodes
+        const nodes = Array.from(allDevices).map(device => ({{
+            id: device,
+            label: device,
+            color: getDeviceColor(device),
+            size: getNodeSize(device)
+        }}));
+
+        // Create edges (deduplicate bidirectional connections)
+        const edgeMap = new Map();
+        topologyData.connections.forEach(conn => {{
+            const key1 = `${{conn.local_device}}-${{conn.remote_device}}`;
+            const key2 = `${{conn.remote_device}}-${{conn.local_device}}`;
+
+            if (!edgeMap.has(key1) && !edgeMap.has(key2)) {{
+                edgeMap.set(key1, {{
+                    source: conn.local_device,
+                    target: conn.remote_device,
+                    color: getEdgeColor(conn.local_speed),
+                    localPort: conn.local_port || '?',
+                    remotePort: conn.remote_port || '?',
+                    speed: conn.local_speed || 'Unknown'
+                }});
+            }}
+        }});
+
+        const links = Array.from(edgeMap.values());
+
+        // Update statistics
+        document.getElementById('deviceCount').textContent = nodes.length;
+        document.getElementById('connectionCount').textContent = links.length;
+        document.getElementById('switchCount').textContent =
+            nodes.filter(n => {{
+                const name = n.label.toLowerCase();
+                return name.includes('2930') || name.includes('2520') ||
+                       name.includes('crs') || name.includes('arista') ||
+                       name.includes('aruba') || name.includes('switch');
+            }}).length;
+
+        // D3.js force-directed graph
+        const width = document.getElementById('mynetwork').clientWidth;
+        const height = 700;
+
+        const svg = d3.select('#mynetwork')
+            .append('svg')
+            .attr('width', width)
+            .attr('height', height);
+
+        // Add zoom behavior
+        const g = svg.append('g');
+        const zoom = d3.zoom()
+            .scaleExtent([0.1, 4])
+            .on('zoom', (event) => {{
+                g.attr('transform', event.transform);
+            }});
+        svg.call(zoom);
+
+        // Store zoom transform for reset
+        let currentTransform = d3.zoomIdentity;
+
+        // Create force simulation with physics
+        const simulation = d3.forceSimulation(nodes)
+            .force('link', d3.forceLink(links).id(d => d.id).distance(150).strength(0.5))
+            .force('charge', d3.forceManyBody().strength(-600))
+            .force('center', d3.forceCenter(width / 2, height / 2))
+            .force('collision', d3.forceCollide().radius(60));
+
+        // Create links
+        const link = g.append('g')
+            .selectAll('line')
+            .data(links)
+            .join('line')
+            .attr('class', 'link')
+            .attr('stroke', d => d.color)
+            .on('mouseover', function(event, d) {{
+                d3.select('#tooltip')
+                    .style('display', 'block')
+                    .style('left', (event.pageX + 10) + 'px')
+                    .style('top', (event.pageY - 10) + 'px')
+                    .html(`<strong>Connection</strong><br>
+                           ${{d.source.id}}:<strong>${{d.localPort}}</strong> ↔
+                           ${{d.target.id}}:<strong>${{d.remotePort}}</strong><br>
+                           Speed: <strong>${{d.speed}}</strong>`);
+            }})
+            .on('mouseout', function() {{
+                d3.select('#tooltip').style('display', 'none');
+            }});
+
+        // Create nodes
+        const node = g.append('g')
+            .selectAll('g')
+            .data(nodes)
+            .join('g')
+            .attr('class', 'node')
+            .call(d3.drag()
+                .on('start', dragstarted)
+                .on('drag', dragged)
+                .on('end', dragended));
+
+        node.append('rect')
+            .attr('width', d => d.size * 2.8)
+            .attr('height', d => d.size * 1.6)
+            .attr('x', d => -d.size * 1.4)
+            .attr('y', d => -d.size * 0.8)
+            .attr('rx', 6)
+            .attr('fill', d => d.color)
+            .attr('stroke', '#fff')
+            .attr('stroke-width', 2.5);
+
+        node.append('text')
+            .text(d => d.label)
+            .attr('dy', 4)
+            .on('mouseover', function(event, d) {{
+                const connections = links.filter(l =>
+                    l.source.id === d.id || l.target.id === d.id
+                );
+                d3.select('#tooltip')
+                    .style('display', 'block')
+                    .style('left', (event.pageX + 10) + 'px')
+                    .style('top', (event.pageY - 10) + 'px')
+                    .html(`<strong>${{d.label}}</strong><br>
+                           Type: ${{getDeviceType(d.label)}}<br>
+                           Connections: <strong>${{connections.length}}</strong>`);
+            }})
+            .on('mouseout', function() {{
+                d3.select('#tooltip').style('display', 'none');
+            }});
+
+        function getDeviceType(name) {{
+            const n = name.toLowerCase();
+            if (n.includes('mikrotik')) return 'MikroTik Device';
+            if (n.includes('arista')) return 'Arista Switch';
+            if (n.includes('aruba') || n.includes('2930') || n.includes('2520')) return 'HP Aruba Switch';
+            if (n.includes('proxmox')) return 'Proxmox Host';
+            if (n.includes('linux') || n.includes('nas')) return 'Linux Server';
+            return 'Network Device';
+        }}
+
+        // Update positions on each tick
+        simulation.on('tick', () => {{
+            link
+                .attr('x1', d => d.source.x)
+                .attr('y1', d => d.source.y)
+                .attr('x2', d => d.target.x)
+                .attr('y2', d => d.target.y);
+
+            node
+                .attr('transform', d => `translate(${{d.x}},${{d.y}})`);
+        }});
+
+        // Drag functions with rubber-band physics
+        function dragstarted(event, d) {{
+            if (!event.active) simulation.alphaTarget(0.3).restart();
+            d.fx = d.x;
+            d.fy = d.y;
+        }}
+
+        function dragged(event, d) {{
+            d.fx = event.x;
+            d.fy = event.y;
+        }}
+
+        function dragended(event, d) {{
+            if (!event.active) simulation.alphaTarget(0);
+            // Release fixed position for rubber-band effect
+            d.fx = null;
+            d.fy = null;
+        }}
+
+        // Control functions
+        function resetSimulation() {{
+            nodes.forEach(d => {{
+                d.fx = null;
+                d.fy = null;
+            }});
+            simulation.alpha(1).restart();
+        }}
+
+        function zoomIn() {{
+            svg.transition().call(zoom.scaleBy, 1.3);
+        }}
+
+        function zoomOut() {{
+            svg.transition().call(zoom.scaleBy, 0.7);
+        }}
+
+        function resetZoom() {{
+            svg.transition().call(zoom.transform, d3.zoomIdentity);
+        }}
+    </script>
+</body>
+</html>'''
+
+        # Write to file
+        with open(output_file, 'w') as f:
+            f.write(html_content)
+
+        self.logger.info(f"D3.js interactive visualization saved to {output_file}")
+
 
 def create_sample_config(filename: str = 'devices.json'):
     """Create a sample configuration file"""
@@ -2291,11 +3026,14 @@ Examples:
   # Test specific device
   %(prog)s --test linux-server-01 devices.json
 
-  # Discover and visualize network topology
+  # Discover and visualize network topology (creates PNG, HTML, and D3 by default)
   %(prog)s devices.json
 
   # Discover with custom output files
-  %(prog)s devices.json --output topology.json --graph network.png
+  %(prog)s devices.json --output topology.json --graph network.png --d3 interactive.html
+
+  # Skip D3.js visualization, only create PNG and static HTML
+  %(prog)s devices.json --no-d3
 
   # Verbose mode for debugging
   %(prog)s -v devices.json
@@ -2319,6 +3057,10 @@ Examples:
                        help='Generate interactive HTML visualization (default: network_topology.html, use --no-html to disable)')
     parser.add_argument('--no-html', action='store_true',
                        help='Skip generating HTML visualization')
+    parser.add_argument('--d3', default='network_topology_d3.html',
+                       help='Generate D3.js interactive force-directed graph (default: network_topology_d3.html, use --no-d3 to disable)')
+    parser.add_argument('--no-d3', action='store_true',
+                       help='Skip generating D3.js visualization')
     parser.add_argument('--verbose', '-v', action='store_true',
                        help='Enable verbose logging')
 
@@ -2383,6 +3125,10 @@ Examples:
     # Generate HTML visualization by default (unless --no-html is specified)
     if not args.no_html and args.html:
         discovery.generate_html_visualization(args.html)
+
+    # Generate D3.js interactive visualization by default (unless --no-d3 is specified)
+    if not args.no_d3 and args.d3:
+        discovery.visualize_d3_interactive(args.d3)
 
     return 0
 

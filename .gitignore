@@ -16,6 +16,7 @@ ENV/
 *.csv
 *.html
 !sample_output.html
+!sample_output_d3.html
 *.png
 !sample_network_topology.png
 *.svg

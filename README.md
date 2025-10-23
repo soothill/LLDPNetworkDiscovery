@@ -8,8 +8,12 @@ A comprehensive Python tool for discovering and visualizing network topology usi
 - **SSH-Based Discovery**: Securely connects to devices via SSH with per-device credential configuration
 - **Port Speed Detection**: Automatically detects and displays network port speeds (1G, 10G, etc.)
 - **Connectivity Testing**: Built-in testing mode to verify device accessibility before discovery
-- **Network Visualization**: Generates beautiful graphical network topology diagrams with port speeds
-- **Multiple Output Formats**: Exports topology data in JSON and PNG formats
+- **Three Visualization Types**:
+  - High-resolution PNG diagrams
+  - Static HTML with circular layout
+  - **D3.js interactive force-directed graph** with draggable nodes ⭐ NEW!
+- **Multiple Output Formats**: Exports topology data in JSON, PNG, and HTML formats
+- **Interactive Controls**: Drag nodes, zoom/pan, hover tooltips, and physics simulation
 - **Flexible Authentication**: Supports both password and SSH key-based authentication
 - **Detailed Logging**: Verbose mode for troubleshooting and debugging
 
@@ -229,11 +233,47 @@ optional arguments:
 
 ### Graphical Output
 
-The tool generates a network topology diagram with:
+The tool generates three types of network topology visualizations:
+
+#### 1. PNG Visualization (`network_topology.png`)
+- **High-resolution PNG** (300 DPI) suitable for documentation and printing
 - **Color-coded nodes** by device type
 - **Port labels** on all connections
 - **Legend** showing device types
-- **High-resolution PNG** (300 DPI) suitable for documentation
+- **Port speed indicators**
+
+#### 2. Static HTML Visualization (`network_topology.html`)
+- **Interactive circular layout** with modern glassmorphism design
+- **Hover tooltips** showing device details
+- **Clickable legend** items
+- **Network statistics** dashboard
+- **Responsive design** for all screen sizes
+- **Sample**: [sample_output.html](sample_output.html)
+
+#### 3. D3.js Interactive Visualization (`network_topology_d3.html`) ⭐ NEW!
+- **Force-directed graph** with physics-based layout
+- **Draggable nodes** with rubber-band physics
+- **Zoom and pan** controls (scroll to zoom)
+- **Interactive tooltips** on hover
+- **Control buttons**: Reset layout, Zoom in/out, Reset zoom
+- **Real-time physics simulation** - nodes spring back when released
+- **Color-coded connections** by speed (1G, 10G, etc.)
+- **Automatic layout** that adjusts as you drag nodes
+- **Sample**: [sample_output_d3.html](sample_output_d3.html)
+
+**Visualization Controls**:
+```bash
+# Generate all three visualizations (default)
+python lldp_discovery.py devices.json
+
+# Skip specific visualizations
+python lldp_discovery.py devices.json --no-graph        # Skip PNG
+python lldp_discovery.py devices.json --no-html         # Skip static HTML
+python lldp_discovery.py devices.json --no-d3           # Skip D3.js interactive
+
+# Custom output filenames
+python lldp_discovery.py devices.json --graph my_network.png --html my_network.html --d3 interactive.html
+```
 
 ## Security Considerations
 
