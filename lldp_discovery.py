@@ -1006,11 +1006,14 @@ class LLDPDiscovery:
         }
 
         command = test_commands.get(device.device_type, 'echo test')
+        self.logger.info(f"Executing test command on {device.hostname}: {command}")
 
         # Use shell-based execution for devices that need interactive mode
         if device.device_type in ['aruba', 'arista', 'ruijie']:
+            self.logger.debug(f"Using shell-based execution for {device.device_type} device")
             stdout, stderr, exit_code = ssh.execute_shell_command(command, enable_mode=True)
         else:
+            self.logger.debug(f"Using exec_command for {device.device_type} device")
             stdout, stderr, exit_code = ssh.execute_command(command)
 
         ssh.close()
@@ -1074,11 +1077,15 @@ class LLDPDiscovery:
             ssh.close()
             return []
 
+        self.logger.info(f"Executing LLDP command on {device.hostname}: {command}")
+
         # Use shell-based execution for devices that need interactive mode
         if device.device_type in ['aruba', 'arista', 'ruijie']:
+            self.logger.debug(f"Using shell-based execution for {device.device_type} device")
             stdout, stderr, exit_code = ssh.execute_shell_command(command, enable_mode=True)
         else:
             # Use regular exec_command for Linux, MikroTik, Proxmox
+            self.logger.debug(f"Using exec_command for {device.device_type} device")
             request_pty = False  # Don't use PTY for any device by default (only sudo needs it)
             stdout, stderr, exit_code = ssh.execute_command(command, request_pty=request_pty)
 
