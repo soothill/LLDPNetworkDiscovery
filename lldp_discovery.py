@@ -213,6 +213,13 @@ class SSHConnection:
             output = shell.recv(4096).decode('utf-8', errors='ignore')
             self.logger.debug(f"Initial prompt: {output[:100]}")
 
+            # Check if there's a banner requiring space/enter to continue
+            if '-- more --' in output.lower() or 'press any key' in output.lower():
+                self.logger.debug("Detected banner screen in enable mode, sending space to continue")
+                shell.send(' ')
+                time.sleep(0.5)
+                output += shell.recv(4096).decode('utf-8', errors='ignore')
+
             # Send enable command
             shell.send('enable\n')
             time.sleep(0.5)
@@ -302,13 +309,25 @@ class SSHConnection:
             try:
                 initial_output = shell.recv(65535).decode('utf-8', errors='ignore')
                 self.logger.debug(f"Initial shell output: {initial_output[:200]}")
+
+                # Check if there's a banner requiring space/enter to continue
+                # Common on HP Aruba switches
+                if '-- more --' in initial_output.lower() or 'press any key' in initial_output.lower():
+                    self.logger.debug("Detected banner screen, sending space to continue")
+                    shell.send(' ')
+                    time.sleep(0.5)
+                    try:
+                        shell.recv(65535)  # Discard banner continuation
+                    except:
+                        pass
             except:
                 initial_output = ""
 
             # Disable terminal paging for Aruba/Arista devices
             if self.device.device_type in ['aruba', 'arista', 'ruijie']:
+                self.logger.debug("Disabling paging with 'no page' command")
                 shell.send('no page\n')
-                time.sleep(0.3)
+                time.sleep(0.5)
                 try:
                     shell.recv(65535)  # Discard output
                 except:
