@@ -282,6 +282,63 @@ class SSHConnection:
             self.logger.error(f"Error executing command on {self.device.hostname}: {e}")
             return "", str(e), 1
 
+    def execute_shell_command(self, command: str, enable_mode: bool = False) -> Tuple[str, str, int]:
+        """Execute command using interactive shell (for devices like Aruba that need it)
+
+        Args:
+            command: Command to execute
+            enable_mode: Whether device is in enable mode (affects prompt detection)
+        """
+        if not self.client:
+            return "", "Not connected", 1
+
+        try:
+            import time
+            shell = self.client.invoke_shell()
+            shell.settimeout(10)
+
+            # Wait for prompt
+            time.sleep(0.5)
+            initial_output = shell.recv(4096).decode('utf-8', errors='ignore')
+            self.logger.debug(f"Initial shell output: {initial_output[:200]}")
+
+            # Send command
+            shell.send(command + '\n')
+            time.sleep(1)  # Wait for command to execute
+
+            # Collect output
+            output = ""
+            while True:
+                try:
+                    chunk = shell.recv(4096).decode('utf-8', errors='ignore')
+                    if not chunk:
+                        break
+                    output += chunk
+                    # Check if we got a prompt back (> or #)
+                    if output.strip().endswith('>') or output.strip().endswith('#'):
+                        break
+                except Exception:
+                    break
+
+            shell.close()
+
+            # Clean up output - remove command echo and prompt
+            lines = output.split('\n')
+            # Remove first line (command echo) and last line (prompt)
+            if len(lines) > 2:
+                cleaned_output = '\n'.join(lines[1:-1])
+            else:
+                cleaned_output = output
+
+            # Assume success if we got output
+            exit_code = 0 if cleaned_output.strip() else 1
+
+            return cleaned_output, "", exit_code
+
+        except Exception as e:
+            self.logger.error(f"Error executing shell command on {self.device.hostname}: {e}")
+            return "", str(e), 1
+
     def close(self):
         """Close SSH connection"""
         if self.client:
@@ -895,15 +952,22 @@ class LLDPDiscovery:
         }
 
         command = test_commands.get(device.device_type, 'echo test')
-        stdout, stderr, exit_code = ssh.execute_command(command)
+
+        # Use shell-based execution for devices that need interactive mode
+        if device.device_type in ['aruba', 'arista', 'ruijie']:
+            stdout, stderr, exit_code = ssh.execute_shell_command(command, enable_mode=True)
+        else:
+            stdout, stderr, exit_code = ssh.execute_command(command)
 
         ssh.close()
 
         if exit_code == 0:
             self.logger.info(f"✓ {device.hostname} - Connection successful")
+            self.logger.info(f"Output: {stdout[:200]}")  # Show first 200 chars
             return True
         else:
             self.logger.error(f"✗ {device.hostname} - Command execution failed")
+            self.logger.error(f"Error: {stderr}")
             return False
 
     def test_all_devices(self) -> Dict[str, bool]:
@@ -956,9 +1020,13 @@ class LLDPDiscovery:
             ssh.close()
             return []
 
-        # Don't use PTY - it causes interactive mode issues
-        request_pty = False  # Don't use PTY for any device by default (only sudo needs it)
-        stdout, stderr, exit_code = ssh.execute_command(command, request_pty=request_pty)
+        # Use shell-based execution for devices that need interactive mode
+        if device.device_type in ['aruba', 'arista', 'ruijie']:
+            stdout, stderr, exit_code = ssh.execute_shell_command(command, enable_mode=True)
+        else:
+            # Use regular exec_command for Linux, MikroTik, Proxmox
+            request_pty = False  # Don't use PTY for any device by default (only sudo needs it)
+            stdout, stderr, exit_code = ssh.execute_command(command, request_pty=request_pty)
 
         if exit_code != 0:
             self.logger.error(f"LLDP command failed on {device.hostname}")
