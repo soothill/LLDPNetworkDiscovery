@@ -1332,11 +1332,18 @@ class LLDPDiscovery:
         for edge_key, ports in edge_labels.items():
             formatted_edge_labels[edge_key] = "\n".join(ports)
 
-        # Create visualization
-        plt.figure(figsize=(16, 12))
+        # Calculate figure size based on number of nodes (minimum 20x15, scales up)
+        num_nodes = len(G.nodes())
+        fig_width = max(20, num_nodes * 2)
+        fig_height = max(15, num_nodes * 1.5)
 
-        # Use spring layout for better spacing
-        pos = nx.spring_layout(G, k=2, iterations=50, seed=42)
+        # Create visualization
+        plt.figure(figsize=(fig_width, fig_height))
+
+        # Use spring layout with more spacing (k controls distance between nodes)
+        # Higher k = more spread out, more iterations = better layout
+        k_value = 3 / (num_nodes ** 0.5) if num_nodes > 1 else 2  # Adaptive spacing
+        pos = nx.spring_layout(G, k=k_value, iterations=100, seed=42, scale=2)
 
         # Define colors for different device types
         color_map = {
@@ -1354,21 +1361,27 @@ class LLDPDiscovery:
             device_type = G.nodes[node].get('device_type', 'unknown')
             node_colors.append(color_map.get(device_type, '#95a5a6'))
 
+        # Scale visual elements based on figure size
+        node_size = min(5000, max(2000, 100000 / num_nodes))  # Larger nodes for fewer devices
+        font_size_nodes = min(14, max(8, 120 / (num_nodes ** 0.5)))
+        font_size_edges = min(10, max(6, 80 / (num_nodes ** 0.5)))
+        edge_width = min(3, max(1.5, 40 / num_nodes))
+
         # Draw nodes
         nx.draw_networkx_nodes(G, pos, node_color=node_colors,
-                              node_size=3000, alpha=0.9,
+                              node_size=node_size, alpha=0.9,
                               edgecolors='black', linewidths=2)
 
         # Draw edges
-        nx.draw_networkx_edges(G, pos, width=2, alpha=0.6, edge_color='#7f8c8d')
+        nx.draw_networkx_edges(G, pos, width=edge_width, alpha=0.6, edge_color='#7f8c8d')
 
         # Draw labels
-        nx.draw_networkx_labels(G, pos, font_size=10, font_weight='bold')
+        nx.draw_networkx_labels(G, pos, font_size=font_size_nodes, font_weight='bold')
 
         # Draw edge labels (port information) - using formatted labels
-        nx.draw_networkx_edge_labels(G, pos, formatted_edge_labels, font_size=8,
+        nx.draw_networkx_edge_labels(G, pos, formatted_edge_labels, font_size=font_size_edges,
                                      bbox=dict(boxstyle='round,pad=0.3',
-                                             facecolor='white', alpha=0.7))
+                                             facecolor='white', alpha=0.8))
 
         # Create legend
         legend_elements = [
@@ -1902,8 +1915,16 @@ class LLDPDiscovery:
         </div>
 
         <div class="main-content">
-            <div class="topology-container">
-                <svg width="1000" height="800" viewBox="0 0 1000 800">
+            <div class="topology-container">'''
+
+        # Calculate SVG size dynamically based on device count
+        svg_width = base_size * 2
+        svg_height = int(base_size * 1.6)
+
+        html_content += f'''
+                <svg width="{svg_width}" height="{svg_height}" viewBox="0 0 {svg_width} {svg_height}"'''
+
+        html_content += '''>
                     <defs>
                         <filter id="glow">
                             <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
@@ -1930,9 +1951,11 @@ class LLDPDiscovery:
 
         self.logger.info(f"HTML: Displaying {num_devices} devices ({len(self.devices)} configured, {num_devices - len(self.devices)} discovered)")
 
-        # Simple circular layout for nodes
-        center_x, center_y = 500, 400
-        radius = 300
+        # Adaptive circular layout for nodes - scales with device count
+        # Base size that scales with number of devices
+        base_size = max(600, num_devices * 40)  # Larger canvas for more devices
+        center_x, center_y = base_size, base_size * 0.8
+        radius = min(base_size * 0.7, num_devices * 30)  # Radius grows with device count
         device_positions = {}
 
         for i, device_name in enumerate(all_devices_sorted):
