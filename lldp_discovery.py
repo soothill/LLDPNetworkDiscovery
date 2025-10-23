@@ -503,7 +503,8 @@ class PortSpeedDetector:
     def get_port_speeds_arista(ssh: SSHConnection, ports: List[str]) -> Dict[str, str]:
         """Get port speeds for Arista EOS interfaces"""
         speeds = {}
-        stdout, stderr, exit_code = ssh.execute_command('show interfaces status')
+        # Use shell command for Arista devices (requires enable mode)
+        stdout, stderr, exit_code = ssh.execute_shell_command('show interfaces status', enable_mode=True)
 
         if exit_code == 0:
             for line in stdout.split('\n'):
@@ -529,7 +530,8 @@ class PortSpeedDetector:
     def get_port_speeds_aruba(ssh: SSHConnection, ports: List[str]) -> Dict[str, str]:
         """Get port speeds for HP Aruba interfaces"""
         speeds = {}
-        stdout, stderr, exit_code = ssh.execute_command('show interfaces brief')
+        # Use shell command for Aruba devices (requires enable mode)
+        stdout, stderr, exit_code = ssh.execute_shell_command('show interfaces brief', enable_mode=True)
 
         if exit_code == 0:
             for line in stdout.split('\n'):
@@ -559,7 +561,8 @@ class PortSpeedDetector:
     def get_port_speeds_ruijie(ssh: SSHConnection, ports: List[str]) -> Dict[str, str]:
         """Get port speeds for Ruijie interfaces"""
         speeds = {}
-        stdout, stderr, exit_code = ssh.execute_command('show interfaces status')
+        # Use shell command for Ruijie devices (requires enable mode)
+        stdout, stderr, exit_code = ssh.execute_shell_command('show interfaces status', enable_mode=True)
 
         if exit_code == 0:
             for line in stdout.split('\n'):
