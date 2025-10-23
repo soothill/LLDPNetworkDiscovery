@@ -390,7 +390,7 @@ class SSHConnection:
         except Exception as e:
             self.logger.error(f"Error executing shell command on {self.device.hostname}: {e}")
             import traceback
-            self.logger.debug(f"Traceback: {traceback.format_exc()}")
+            self.logger.error(f"Traceback: {traceback.format_exc()}")
             return "", str(e), 1
 
     def close(self):
@@ -1018,13 +1018,17 @@ class LLDPDiscovery:
 
         ssh.close()
 
+        self.logger.info(f"Command exit code: {exit_code}")
+        self.logger.info(f"Output length: {len(stdout)} chars, Error length: {len(stderr)} chars")
+
         if exit_code == 0:
             self.logger.info(f"✓ {device.hostname} - Connection successful")
             self.logger.info(f"Output: {stdout[:200]}")  # Show first 200 chars
             return True
         else:
             self.logger.error(f"✗ {device.hostname} - Command execution failed")
-            self.logger.error(f"Error: {stderr}")
+            self.logger.error(f"Stdout: {stdout[:500]}")  # Show stdout even on failure
+            self.logger.error(f"Stderr: {stderr[:500]}")
             return False
 
     def test_all_devices(self) -> Dict[str, bool]:
