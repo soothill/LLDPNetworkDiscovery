@@ -1131,8 +1131,9 @@ class LLDPDiscovery:
             ssh.close()
             return []
 
-        self.logger.debug(f"LLDP command succeeded on {device.hostname}")
-        self.logger.debug(f"  Output length: {len(stdout)} chars")
+        self.logger.info(f"LLDP command succeeded on {device.hostname}")
+        self.logger.info(f"  Output length: {len(stdout)} chars")
+        self.logger.debug(f"  First 500 chars of output: {stdout[:500]}")
 
         # Parse output based on device type
         parsers = {
@@ -1146,6 +1147,8 @@ class LLDPDiscovery:
 
         parser = parsers.get(device.device_type)
         neighbors = parser(stdout, device.hostname)
+
+        self.logger.info(f"  Parsed {len(neighbors)} LLDP neighbors from {device.hostname}")
 
         # Get port speeds for local ports
         if neighbors:
