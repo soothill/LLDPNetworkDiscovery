@@ -774,54 +774,76 @@ class LLDPParser:
 
     @staticmethod
     def parse_aruba(output: str, hostname: str) -> List[LLDPNeighbor]:
-        """Parse LLDP output from HP Aruba"""
+        """Parse LLDP output from HP Aruba - table format from 'show lldp info remote-device'"""
         neighbors = []
 
-        # Parse "show lldp neighbors detail" output
+        # Parse table format:
+        # LocalPort | ChassisId          PortId             PortDescr SysName
+        # --------- + ------------------ ------------------ --------- ------------------
+        # 1         | b8a44f-a8586b      b8 a4 4f a8 58 6b  eth0      axis-b8a44fa8586b
+
         lines = output.split('\n')
-        current_neighbor = {}
+        in_table = False
 
         for line in lines:
-            line = line.strip()
+            # Skip header and separator lines
+            if 'LocalPort' in line and 'ChassisId' in line:
+                in_table = True
+                continue
+            if '---' in line or not line.strip():
+                continue
+            if not in_table:
+                continue
 
-            if line.startswith('Local Port'):
-                if current_neighbor and 'local_port' in current_neighbor:
-                    neighbors.append(LLDPNeighbor(
-                        local_device=hostname,
-                        local_port=current_neighbor.get('local_port', ''),
-                        remote_device=current_neighbor.get('remote_device', ''),
-                        remote_port=current_neighbor.get('remote_port', ''),
-                        remote_description=current_neighbor.get('remote_desc')
-                    ))
-                current_neighbor = {}
-                # Parse: "Local Port : 1/1/1"
-                parts = line.split(':', 1)
-                if len(parts) == 2:
-                    current_neighbor['local_port'] = parts[1].strip()
+            # Split by | to get columns
+            parts = line.split('|')
+            if len(parts) < 2:
+                continue
 
-            elif 'System Name' in line:
-                parts = line.split(':', 1)
-                if len(parts) == 2:
-                    current_neighbor['remote_device'] = parts[1].strip()
+            # Parse: LocalPort | ChassisId PortId PortDescr SysName
+            local_port = parts[0].strip()
+            if not local_port or not local_port[0].isdigit():
+                continue
 
-            elif 'Port ID' in line and 'remote_port' not in current_neighbor:
-                parts = line.split(':', 1)
-                if len(parts) == 2:
-                    current_neighbor['remote_port'] = parts[1].strip()
+            # The rest is after the |
+            rest = parts[1].strip() if len(parts) > 1 else ""
 
-            elif 'Port Descr' in line:
-                parts = line.split(':', 1)
-                if len(parts) == 2:
-                    current_neighbor['remote_desc'] = parts[1].strip()
+            # Split the rest into fields (ChassisId, PortId, PortDescr, SysName)
+            # Fields are space-separated but may have spaces within them
+            fields = rest.split()
 
-        # Add last neighbor
-        if current_neighbor and 'local_port' in current_neighbor:
+            if len(fields) < 2:
+                continue
+
+            # ChassisId is first field (or first 2-3 if MAC with spaces)
+            # PortId is usually second or third
+            # PortDescr is optional
+            # SysName is last
+
+            # Simple heuristic: if last field looks like a hostname, use it
+            # Otherwise, use second-to-last or third field
+            remote_device = ""
+            remote_port = ""
+
+            if len(fields) >= 4:
+                # Likely: ChassisId PortId PortDescr SysName
+                remote_port = fields[1]  # PortId
+                remote_device = fields[-1]  # SysName
+            elif len(fields) >= 2:
+                # Likely: ChassisId PortId/SysName
+                remote_port = fields[0] if len(fields) > 2 else fields[1]
+                remote_device = fields[-1]
+
+            # Skip if no valid remote device name
+            if not remote_device or remote_device in ['-', '']:
+                continue
+
             neighbors.append(LLDPNeighbor(
                 local_device=hostname,
-                local_port=current_neighbor.get('local_port', ''),
-                remote_device=current_neighbor.get('remote_device', ''),
-                remote_port=current_neighbor.get('remote_port', ''),
-                remote_description=current_neighbor.get('remote_desc')
+                local_port=local_port,
+                remote_device=remote_device,
+                remote_port=remote_port,
+                remote_description=None
             ))
 
         return neighbors
@@ -1071,7 +1093,7 @@ class LLDPDiscovery:
             'linux': 'sudo lldpctl',
             'mikrotik': '/ip neighbor print detail without-paging where identity!=""',
             'arista': 'show lldp neighbors detail',
-            'aruba': 'show lldp neighbors detail',
+            'aruba': 'show lldp info remote-device',
             'ruijie': 'show lldp neighbors detail',
             'proxmox': 'sudo lldpctl'
         }
