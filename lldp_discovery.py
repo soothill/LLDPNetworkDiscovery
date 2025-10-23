@@ -776,11 +776,13 @@ class LLDPParser:
     def parse_aruba(output: str, hostname: str) -> List[LLDPNeighbor]:
         """Parse LLDP output from HP Aruba - table format from 'show lldp info remote-device'"""
         neighbors = []
+        seen_connections = set()  # Track (local_port, remote_device) to avoid duplicates
 
         # Parse table format:
         # LocalPort | ChassisId          PortId             PortDescr SysName
         # --------- + ------------------ ------------------ --------- ------------------
         # 1         | b8a44f-a8586b      b8 a4 4f a8 58 6b  eth0      axis-b8a44fa8586b
+        # Note: Aruba lists multiple entries per port for VLANs - we only want physical links
 
         lines = output.split('\n')
         in_table = False
@@ -809,34 +811,38 @@ class LLDPParser:
             rest = parts[1].strip() if len(parts) > 1 else ""
 
             # Split the rest into fields (ChassisId, PortId, PortDescr, SysName)
-            # Fields are space-separated but may have spaces within them
             fields = rest.split()
 
             if len(fields) < 2:
                 continue
 
-            # ChassisId is first field (or first 2-3 if MAC with spaces)
-            # PortId is usually second or third
-            # PortDescr is optional
-            # SysName is last
-
-            # Simple heuristic: if last field looks like a hostname, use it
-            # Otherwise, use second-to-last or third field
-            remote_device = ""
+            # Extract remote_device (SysName - last field) and remote_port (PortId)
+            remote_device = fields[-1]  # SysName is always last
             remote_port = ""
-
-            if len(fields) >= 4:
-                # Likely: ChassisId PortId PortDescr SysName
-                remote_port = fields[1]  # PortId
-                remote_device = fields[-1]  # SysName
-            elif len(fields) >= 2:
-                # Likely: ChassisId PortId/SysName
-                remote_port = fields[0] if len(fields) > 2 else fields[1]
-                remote_device = fields[-1]
 
             # Skip if no valid remote device name
             if not remote_device or remote_device in ['-', '']:
                 continue
+
+            # Skip VLAN interface names in PortId field
+            # VLANs appear as: vlan1, vlan200, bridge.201, trunk/..., etc.
+            if len(fields) >= 2:
+                port_id = fields[1] if len(fields) >= 2 else fields[0]
+                # Skip if PortId is a VLAN interface
+                port_id_lower = port_id.lower()
+                if any(vlan_pattern in port_id_lower for vlan_pattern in
+                       ['vlan', 'bridge', 'trunk/', 'bond', 'lag']):
+                    continue
+                remote_port = port_id
+
+            # Create unique key for this physical connection
+            connection_key = (local_port, remote_device)
+
+            # Skip if we've already seen this physical connection
+            if connection_key in seen_connections:
+                continue
+
+            seen_connections.add(connection_key)
 
             neighbors.append(LLDPNeighbor(
                 local_device=hostname,
