@@ -294,33 +294,66 @@ class SSHConnection:
 
         try:
             import time
-            shell = self.client.invoke_shell()
-            shell.settimeout(10)
+            shell = self.client.invoke_shell(width=200, height=100)
+            shell.settimeout(3)  # Short timeout for non-blocking reads
 
-            # Wait for prompt
-            time.sleep(0.5)
-            initial_output = shell.recv(4096).decode('utf-8', errors='ignore')
-            self.logger.debug(f"Initial shell output: {initial_output[:200]}")
+            # Wait for prompt and clear any initial output
+            time.sleep(1)
+            try:
+                initial_output = shell.recv(65535).decode('utf-8', errors='ignore')
+                self.logger.debug(f"Initial shell output: {initial_output[:200]}")
+            except:
+                initial_output = ""
+
+            # Disable terminal paging for Aruba/Arista devices
+            if self.device.device_type in ['aruba', 'arista', 'ruijie']:
+                shell.send('no page\n')
+                time.sleep(0.3)
+                try:
+                    shell.recv(65535)  # Discard output
+                except:
+                    pass
 
             # Send command
+            self.logger.debug(f"Sending command: {command}")
             shell.send(command + '\n')
-            time.sleep(1)  # Wait for command to execute
+            time.sleep(0.5)
 
-            # Collect output
+            # Collect output with timeout
             output = ""
-            while True:
+            start_time = time.time()
+            max_wait = 15  # Maximum 15 seconds for command
+            last_output_time = start_time
+
+            while (time.time() - start_time) < max_wait:
                 try:
-                    chunk = shell.recv(4096).decode('utf-8', errors='ignore')
-                    if not chunk:
+                    chunk = shell.recv(65535).decode('utf-8', errors='ignore')
+                    if chunk:
+                        output += chunk
+                        last_output_time = time.time()
+
+                        # Check if we got a prompt back (last line ends with > or #)
+                        lines = output.strip().split('\n')
+                        if lines and (lines[-1].strip().endswith('>') or lines[-1].strip().endswith('#')):
+                            self.logger.debug(f"Found prompt, command complete")
+                            break
+                    else:
+                        # No data received, check if we've been idle too long
+                        if (time.time() - last_output_time) > 2:
+                            self.logger.debug("No data for 2 seconds, assuming command complete")
+                            break
+                        time.sleep(0.1)
+                except Exception as e:
+                    # Timeout or no more data
+                    if output and (time.time() - last_output_time) > 1:
+                        self.logger.debug(f"Recv timeout/exception after getting data: {e}")
                         break
-                    output += chunk
-                    # Check if we got a prompt back (> or #)
-                    if output.strip().endswith('>') or output.strip().endswith('#'):
-                        break
-                except Exception:
-                    break
+                    time.sleep(0.1)
 
             shell.close()
+
+            self.logger.debug(f"Raw output length: {len(output)}")
+            self.logger.debug(f"Raw output (first 500 chars): {output[:500]}")
 
             # Clean up output - remove command echo and prompt
             lines = output.split('\n')
@@ -337,6 +370,8 @@ class SSHConnection:
 
         except Exception as e:
             self.logger.error(f"Error executing shell command on {self.device.hostname}: {e}")
+            import traceback
+            self.logger.debug(f"Traceback: {traceback.format_exc()}")
             return "", str(e), 1
 
     def close(self):
