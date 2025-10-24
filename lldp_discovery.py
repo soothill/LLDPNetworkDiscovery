@@ -864,7 +864,7 @@ class PortSpeedDetector:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
             # Version identifier for debugging
-            LOG_VERSION = "v2.3-arista-port-matching"
+            LOG_VERSION = "v2.4-arista-column-parsing"
 
             # On first write of the run, clear the log file
             write_mode = 'w' if not PortSpeedDetector._log_initialized else 'a'
@@ -1092,31 +1092,50 @@ class PortSpeedDetector:
 
         if exit_code == 0:
             for line in stdout.split('\n'):
-                # Parse output like: "Et1/1    connected    1        full    10G     Not Present"
-                # Format: Port       Name    Status       Vlan       Duplex  Speed Type
+                # Parse Arista output - format varies based on whether there's a description
+                # With desc:    "Et3/3      MikroTik10GCRS326           connected    trunk    full   10G    40GBASE-CR4"
+                # Without desc: "Et1/1      \"Uplink to 2930F\"           notconnect   1        full   10G    Not Present"
+                # No desc:      "Et8/1                                  notconnect   1        full   10G    Not Present"
+                # Port channel: "Po1        Link-to-Office-10G-Switch   notconnect   trunk    full   unconf N/A"
+
+                # Skip header line
+                if line.startswith('Port') or line.startswith('-'):
+                    continue
+
                 parts = line.split()
-                if len(parts) >= 6 and not line.startswith('Port'):
+                if len(parts) >= 2:
                     interface = parts[0]
 
                     # Match against normalized port names
                     if interface in normalized_mapping:
-                        # Look for speed pattern in the line (e.g., "1G", "10G", "100M", "40G")
-                        speed_match = re.search(r'\b(\d+(?:\.\d+)?[GM])\b', line, re.IGNORECASE)
                         detected_speed = None
 
-                        if speed_match:
-                            detected_speed = speed_match.group(1).upper()
-                            debug_info.append(f"Found speed for {interface}: {detected_speed}")
-                        elif 'connected' in line.lower():
-                            # If connected but no speed found, mark as Link Up
-                            detected_speed = "Link Up"
-                            debug_info.append(f"Port {interface} is connected but no speed found")
-                        elif 'notconnect' in line.lower():
-                            detected_speed = "Down"
-                            debug_info.append(f"Port {interface} is not connected")
-                        else:
+                        # The speed column is not at a fixed position due to variable-length descriptions
+                        # Look for speed patterns in the entire line: "10G", "40G", "1G", "100M", "a-1G" (auto), "unconf"
+                        # Speed appears after duplex (full/half/a-full/a-half) and before Type column
+
+                        # First check for "unconf" (unconfigured port channel)
+                        if 'unconf' in line:
                             detected_speed = "Unknown"
-                            debug_info.append(f"Port {interface} status unknown")
+                            debug_info.append(f"Port {interface} is unconfigured (port channel)")
+                        else:
+                            # Look for speed pattern - must have full word boundary
+                            # Match patterns: 10G, 40G, 1G, 100M, a-10G (auto-negotiated)
+                            speed_match = re.search(r'\b(?:a-)?(\d+(?:\.\d+)?[GM])\b', line, re.IGNORECASE)
+
+                            if speed_match:
+                                detected_speed = speed_match.group(1).upper()
+                                debug_info.append(f"Found speed for {interface}: {detected_speed} from line: {line.strip()}")
+                            elif 'connected' in line.lower():
+                                # If connected but no speed found, mark as Link Up
+                                detected_speed = "Link Up"
+                                debug_info.append(f"Port {interface} is connected but no speed found: {line.strip()}")
+                            elif 'notconnect' in line.lower():
+                                detected_speed = "Down"
+                                debug_info.append(f"Port {interface} is not connected")
+                            else:
+                                detected_speed = "Unknown"
+                                debug_info.append(f"Port {interface} status unknown: {line.strip()}")
 
                         # Apply to all original ports that map to this normalized name
                         for original_port in normalized_mapping[interface]:
