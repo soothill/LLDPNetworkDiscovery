@@ -844,20 +844,25 @@ class PortSpeedDetector:
                 # Match rate/speed (can be "rate:", "rate=", or "speed:")
                 if current_interface:
                     # Try different patterns for speed
+                    # MikroTik formats: "rate=10Gbps", "rate=1Gbps", "rate=100Mbps"
                     speed_patterns = [
-                        r'rate[=:]\s*(\d+[MG])',
-                        r'speed[=:]\s*(\d+[MG])',
-                        r'actual-rate[=:]\s*(\d+[MG])',
-                        r'(\d+Mbps|\d+Gbps)'
+                        r'rate[=:]\s*(\d+(?:\.\d+)?[MG]bps)',      # "rate=10Gbps"
+                        r'speed[=:]\s*(\d+(?:\.\d+)?[MG]bps)',     # "speed=1Gbps"
+                        r'actual-rate[=:]\s*(\d+(?:\.\d+)?[MG])',  # "actual-rate=1G"
+                        r'rate[=:]\s*(\d+[MG])',                   # "rate=10G"
+                        r'speed[=:]\s*(\d+[MG])',                  # "speed=1G"
                     ]
 
                     for pattern in speed_patterns:
                         rate_match = re.search(pattern, line, re.IGNORECASE)
                         if rate_match:
                             rate_str = rate_match.group(1)
-                            # Normalize format
-                            if 'Mbps' in rate_str or 'Gbps' in rate_str:
-                                rate_str = rate_str.replace('bps', '').replace('M', 'M').replace('G', 'G')
+                            # Normalize format: "10Gbps" -> "10G", "1000Mbps" -> "1G"
+                            rate_str = rate_str.replace('bps', '').upper()
+                            # Convert Mbps >= 1000 to Gbps
+                            num_match = re.search(r'(\d+)M', rate_str)
+                            if num_match and int(num_match.group(1)) >= 1000:
+                                rate_str = f"{int(num_match.group(1)) // 1000}G"
                             current_rate = rate_str
                             break
 
@@ -882,14 +887,22 @@ class PortSpeedDetector:
         if exit_code == 0:
             for line in stdout.split('\n'):
                 # Parse output like: "Et1    connected    1        full    1G     1000baseT"
+                # Format: Port       Name    Status       Vlan       Duplex  Speed Type
                 parts = line.split()
-                if len(parts) >= 6:
+                if len(parts) >= 2 and not line.startswith('Port'):
                     interface = parts[0]
                     # Match any port in our list
                     for port in ports:
                         if port in interface or interface in port:
-                            speed = parts[5]  # Speed column
-                            speeds[port] = speed
+                            # Look for speed pattern in the line (e.g., "1G", "10G", "100M")
+                            speed_match = re.search(r'\b(\d+(?:\.\d+)?[GM](?:b(?:ps)?)?)\b', line, re.IGNORECASE)
+                            if speed_match:
+                                speeds[port] = speed_match.group(1).upper()
+                            elif 'connected' in line.lower():
+                                # If connected but no speed found, mark as Link Up
+                                speeds[port] = "Link Up"
+                            else:
+                                speeds[port] = "Unknown"
                             break
 
         # Fill in unknowns
@@ -908,19 +921,36 @@ class PortSpeedDetector:
 
         if exit_code == 0:
             for line in stdout.split('\n'):
-                # Parse Aruba output
+                # Parse Aruba output format
+                # Example: "9    Up     Yes    Enabled  Auto    1000FDx  None"
+                # Example: "25   Down   No     Disabled Auto    None     None"
                 parts = line.split()
                 if len(parts) >= 3:
                     port_name = parts[0]
                     for port in ports:
-                        if port in port_name or port_name in port:
-                            # Speed is usually in format like "1000FDx" or "10GigFD"
-                            if 'Up' in line:
-                                speed_match = re.search(r'(\d+(?:G|M)?(?:ig)?(?:FD|HD|x)?)', line)
-                                if speed_match:
-                                    speeds[port] = speed_match.group(1)
-                                else:
-                                    speeds[port] = "Link Up"
+                        # Match port number (e.g., "9" matches port "9")
+                        if port_name == port or port in port_name or port_name in port:
+                            # Look for speed pattern like "1000FDx", "10GigFD", "1000FD", etc.
+                            # Speed patterns: 10M, 100M, 1000M, 10G, 1000FDx, 10GigFD, etc.
+                            speed_match = re.search(r'(\d+(?:Gig|G|M)(?:FDx|FD|HDx|HD)?)', line, re.IGNORECASE)
+                            if speed_match:
+                                speed_str = speed_match.group(1)
+                                # Normalize: "1000FDx" -> "1G", "10GigFD" -> "10G"
+                                # Extract numeric part
+                                num_match = re.search(r'(\d+)', speed_str)
+                                if num_match:
+                                    speed_num = int(num_match.group(1))
+                                    if 'G' in speed_str.upper() or 'GIG' in speed_str.upper():
+                                        speeds[port] = f"{speed_num}G"
+                                    elif speed_num >= 1000:
+                                        # 1000M = 1G
+                                        speeds[port] = f"{speed_num // 1000}G"
+                                    else:
+                                        speeds[port] = f"{speed_num}M"
+                            elif 'Up' in line:
+                                speeds[port] = "Link Up"
+                            else:
+                                speeds[port] = "Down"
                             break
 
         # Fill in unknowns
@@ -940,21 +970,41 @@ class PortSpeedDetector:
         if exit_code == 0:
             for line in stdout.split('\n'):
                 # Parse Ruijie output similar to Cisco format
+                # Example: "Gi1/0/1  connected    trunk      1          a-full  a-1000"
+                # Example: "Gi1/0/2  notconnect   1          auto    auto"
                 parts = line.split()
-                if len(parts) >= 4:
+                if len(parts) >= 2 and not line.startswith('Port'):
                     interface = parts[0]
                     for port in ports:
                         if port in interface or interface in port:
-                            # Speed is typically in format like "1000" or "10G"
-                            if 'connected' in line.lower() or 'up' in line.lower():
-                                speed_match = re.search(r'(\d+(?:G|M)?)', line)
+                            # Look for speed patterns
+                            # Common formats: "a-1000", "1000", "10G", "a-10G", "auto"
+                            speed_patterns = [
+                                r'\b(?:a-)?(\d+(?:\.\d+)?[GM])\b',  # "a-10G", "10G", "1G"
+                                r'\b(?:a-)(\d{2,5})\b',              # "a-1000", "a-100"
+                                r'\b(\d{2,5})(?:\s|$)'               # "1000 ", "100 "
+                            ]
+
+                            speed_found = False
+                            for pattern in speed_patterns:
+                                speed_match = re.search(pattern, line, re.IGNORECASE)
                                 if speed_match:
                                     speed_str = speed_match.group(1)
                                     # Convert to standard format
                                     if speed_str.isdigit():
+                                        # Numeric value (e.g., "1000" -> "1G")
                                         speeds[port] = PortSpeedDetector._format_speed(int(speed_str))
                                     else:
-                                        speeds[port] = speed_str
+                                        # Already has suffix (e.g., "10G")
+                                        speeds[port] = speed_str.upper()
+                                    speed_found = True
+                                    break
+
+                            if not speed_found:
+                                if 'connected' in line.lower():
+                                    speeds[port] = "Link Up"
+                                else:
+                                    speeds[port] = "Down"
                             break
 
         # Fill in unknowns
@@ -976,14 +1026,21 @@ class PortSpeedDetector:
 
         for line in output.split('\n'):
             # Parse output like: "Et1    connected    1        full    1G     1000baseT"
+            # Format: Port       Name    Status       Vlan       Duplex  Speed Type
             parts = line.split()
-            if len(parts) >= 6:
+            if len(parts) >= 2 and not line.startswith('Port'):
                 interface = parts[0]
                 # Match any port in our list
                 for port in ports:
                     if port in interface or interface in port:
-                        speed = parts[5]  # Speed column
-                        speeds[port] = speed
+                        # Look for speed pattern in the line (e.g., "1G", "10G", "100M")
+                        speed_match = re.search(r'\b(\d+(?:\.\d+)?[GM](?:b(?:ps)?)?)\b', line, re.IGNORECASE)
+                        if speed_match:
+                            speeds[port] = speed_match.group(1).upper()
+                        elif 'connected' in line.lower():
+                            speeds[port] = "Link Up"
+                        else:
+                            speeds[port] = "Unknown"
                         break
 
         # Fill in unknowns
@@ -999,19 +1056,33 @@ class PortSpeedDetector:
         speeds = {}
 
         for line in output.split('\n'):
-            # Parse Aruba output
+            # Parse Aruba output format
+            # Example: "9    Up     Yes    Enabled  Auto    1000FDx  None"
+            # Example: "25   Down   No     Disabled Auto    None     None"
             parts = line.split()
             if len(parts) >= 3:
                 port_name = parts[0]
                 for port in ports:
-                    if port in port_name or port_name in port:
-                        # Speed is usually in format like "1000FDx" or "10GigFD"
-                        if 'Up' in line:
-                            speed_match = re.search(r'(\d+(?:G|M)?(?:ig)?(?:FD|HD|x)?)', line)
-                            if speed_match:
-                                speeds[port] = speed_match.group(1)
-                            else:
-                                speeds[port] = "Link Up"
+                    # Match port number (e.g., "9" matches port "9")
+                    if port_name == port or port in port_name or port_name in port:
+                        # Look for speed pattern like "1000FDx", "10GigFD", "1000FD", etc.
+                        speed_match = re.search(r'(\d+(?:Gig|G|M)(?:FDx|FD|HDx|HD)?)', line, re.IGNORECASE)
+                        if speed_match:
+                            speed_str = speed_match.group(1)
+                            # Normalize: "1000FDx" -> "1G", "10GigFD" -> "10G"
+                            num_match = re.search(r'(\d+)', speed_str)
+                            if num_match:
+                                speed_num = int(num_match.group(1))
+                                if 'G' in speed_str.upper() or 'GIG' in speed_str.upper():
+                                    speeds[port] = f"{speed_num}G"
+                                elif speed_num >= 1000:
+                                    speeds[port] = f"{speed_num // 1000}G"
+                                else:
+                                    speeds[port] = f"{speed_num}M"
+                        elif 'Up' in line:
+                            speeds[port] = "Link Up"
+                        else:
+                            speeds[port] = "Down"
                         break
 
         # Fill in unknowns
@@ -1028,21 +1099,41 @@ class PortSpeedDetector:
 
         for line in output.split('\n'):
             # Parse Ruijie output similar to Cisco format
+            # Example: "Gi1/0/1  connected    trunk      1          a-full  a-1000"
+            # Example: "Gi1/0/2  notconnect   1          auto    auto"
             parts = line.split()
-            if len(parts) >= 4:
+            if len(parts) >= 2 and not line.startswith('Port'):
                 interface = parts[0]
                 for port in ports:
                     if port in interface or interface in port:
-                        # Speed is typically in format like "1000" or "10G"
-                        if 'connected' in line.lower() or 'up' in line.lower():
-                            speed_match = re.search(r'(\d+(?:G|M)?)', line)
+                        # Look for speed patterns
+                        # Common formats: "a-1000", "1000", "10G", "a-10G", "auto"
+                        speed_patterns = [
+                            r'\b(?:a-)?(\d+(?:\.\d+)?[GM])\b',  # "a-10G", "10G", "1G"
+                            r'\b(?:a-)(\d{2,5})\b',              # "a-1000", "a-100"
+                            r'\b(\d{2,5})(?:\s|$)'               # "1000 ", "100 "
+                        ]
+
+                        speed_found = False
+                        for pattern in speed_patterns:
+                            speed_match = re.search(pattern, line, re.IGNORECASE)
                             if speed_match:
                                 speed_str = speed_match.group(1)
                                 # Convert to standard format
                                 if speed_str.isdigit():
+                                    # Numeric value (e.g., "1000" -> "1G")
                                     speeds[port] = PortSpeedDetector._format_speed(int(speed_str))
                                 else:
-                                    speeds[port] = speed_str
+                                    # Already has suffix (e.g., "10G")
+                                    speeds[port] = speed_str.upper()
+                                speed_found = True
+                                break
+
+                        if not speed_found:
+                            if 'connected' in line.lower():
+                                speeds[port] = "Link Up"
+                            else:
+                                speeds[port] = "Down"
                         break
 
         # Fill in unknowns
