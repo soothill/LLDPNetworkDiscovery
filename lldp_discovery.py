@@ -1867,16 +1867,22 @@ class LLDPParser:
                 elif len(remaining_parts) >= 2:
                     # Multiple words - check if last 2 words form a device name pattern
                     # Common patterns: "MikroTik RB5009", "MikroTik CRS326", "MikroTik Hex", "MikroTik 4011"
-                    last_two = ' '.join(remaining_parts[-2:])
-                    last_one = remaining_parts[-1]
 
-                    # If second-to-last word is a vendor name, take last 2 words
-                    vendor_keywords = ['mikrotik', 'cisco', 'arista', 'juniper', 'hp', 'aruba', 'dell']
-                    if any(vendor in remaining_parts[-2].lower() for vendor in vendor_keywords):
-                        remote_device = last_two
-                    else:
-                        # Otherwise just take the last word
-                        remote_device = last_one
+                    # Strategy: Check if any word (not just second-to-last) is a vendor keyword
+                    # If so, take everything from that vendor keyword onwards
+                    vendor_keywords = ['mikrotik', 'cisco', 'arista', 'juniper', 'hp', 'aruba', 'dell', 'ruijie']
+
+                    vendor_found = False
+                    for i, word in enumerate(remaining_parts):
+                        if word.lower() in vendor_keywords:
+                            # Take from this vendor keyword to the end
+                            remote_device = ' '.join(remaining_parts[i:])
+                            vendor_found = True
+                            break
+
+                    if not vendor_found:
+                        # No vendor keyword found, just take the last word
+                        remote_device = remaining_parts[-1]
                 else:
                     remote_device = remaining
             else:
@@ -1888,12 +1894,41 @@ class LLDPParser:
                 continue
 
             # Create unique key for this physical connection
-            connection_key = (local_port, remote_device)
+            # Normalize remote_device for duplicate detection:
+            # "MikroTik RB5009" and "MikroTik" should be treated as the same
+            # Use the longer/more complete name
+            normalized_remote = remote_device.lower().strip()
 
-            # Skip if we've already seen this physical connection
-            if connection_key in seen_connections:
+            # Check if this is a duplicate connection with different naming
+            is_duplicate = False
+            key_to_remove = None
+
+            for existing_key in seen_connections:
+                existing_port, existing_device = existing_key
+                existing_normalized = existing_device.lower().strip()
+
+                if existing_port == local_port:
+                    # Same port - check if device names overlap
+                    if existing_normalized in normalized_remote or normalized_remote in existing_normalized:
+                        # One name contains the other - this is a duplicate
+                        # Keep the longer/more complete name
+                        if len(normalized_remote) > len(existing_normalized):
+                            # Current device name is more complete, remove old one
+                            key_to_remove = existing_key
+                        else:
+                            # Existing name is more complete, skip current one
+                            is_duplicate = True
+                        break
+
+            if is_duplicate:
                 continue
 
+            if key_to_remove:
+                seen_connections.remove(key_to_remove)
+                # Also remove from neighbors list
+                neighbors = [n for n in neighbors if not (n.local_port == local_port and n.remote_device == key_to_remove[1])]
+
+            connection_key = (local_port, remote_device)
             seen_connections.add(connection_key)
 
             neighbors.append(LLDPNeighbor(
