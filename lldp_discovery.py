@@ -864,7 +864,7 @@ class PortSpeedDetector:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
             # Version identifier for debugging
-            LOG_VERSION = "v2.6-arista-speed-regex-fix"
+            LOG_VERSION = "v2.7-d3-visualization-rewrite"
 
             # On first write of the run, clear the log file
             write_mode = 'w' if not PortSpeedDetector._log_initialized else 'a'
@@ -3154,438 +3154,474 @@ class LLDPDiscovery:
         self.logger.info(f"Interactive HTML visualization saved to {output_file}")
 
     def visualize_d3_interactive(self, output_file: str = 'network_topology_d3.html'):
-        """Generate interactive D3.js force-directed graph visualization with draggable nodes"""
+        """Generate clean, modern interactive D3.js force-directed graph visualization"""
 
-        # Collect all unique devices (configured + discovered)
-        all_device_names = set([d.hostname for d in self.devices])
+        # Collect unique devices and create node list
+        device_set = set()
         for neighbor in self.neighbors:
-            all_device_names.add(neighbor.local_device)
-            all_device_names.add(neighbor.remote_device)
+            device_set.add(neighbor.local_device)
+            device_set.add(neighbor.remote_device)
 
-        # Prepare connections data
-        connections = []
-        seen_connections = set()
-
+        # Prepare connection data - deduplicate bidirectional links
+        connection_map = {}
         for neighbor in self.neighbors:
-            # Create bidirectional key to avoid duplicates
-            key1 = (neighbor.local_device, neighbor.remote_device, neighbor.local_port, neighbor.remote_port)
-            key2 = (neighbor.remote_device, neighbor.local_device, neighbor.remote_port, neighbor.local_port)
+            # Create sorted key to ensure bidirectional deduplication
+            devices = tuple(sorted([neighbor.local_device, neighbor.remote_device]))
+            key = f"{devices[0]}-{devices[1]}"
 
-            if key1 not in seen_connections and key2 not in seen_connections:
-                seen_connections.add(key1)
-                connections.append({
-                    'local_device': neighbor.local_device,
-                    'local_port': neighbor.local_port,
-                    'remote_device': neighbor.remote_device,
-                    'remote_port': neighbor.remote_port,
-                    'local_speed': neighbor.local_port_speed or 'Unknown',
-                    'remote_speed': neighbor.remote_port_speed or 'Unknown'
-                })
+            # Keep the connection with the best speed information
+            if key not in connection_map:
+                connection_map[key] = {
+                    'source': neighbor.local_device,
+                    'target': neighbor.remote_device,
+                    'source_port': neighbor.local_port,
+                    'target_port': neighbor.remote_port,
+                    'speed': neighbor.local_port_speed or 'Unknown',
+                    'label': f"{neighbor.local_port} ↔ {neighbor.remote_port}"
+                }
+            else:
+                # Update if this connection has better speed info
+                existing_speed = connection_map[key]['speed']
+                new_speed = neighbor.local_port_speed or 'Unknown'
+                if existing_speed == 'Unknown' and new_speed != 'Unknown':
+                    connection_map[key]['speed'] = new_speed
 
-        self.logger.debug(f"D3: Including {len(connections)} connections in visualization")
+        connections = list(connection_map.values())
 
-        # Generate HTML with D3.js
+        self.logger.info(f"Generating D3 visualization with {len(device_set)} devices and {len(connections)} connections")
+
+        # Generate clean HTML with embedded D3.js visualization
         html_content = f'''<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Network Topology - Interactive D3 Graph</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+    <title>Network Topology</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
-        body {{
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        * {{
             margin: 0;
-            padding: 20px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
+            padding: 0;
+            box-sizing: border-box;
         }}
+
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            padding: 20px;
+        }}
+
+        .container {{
+            max-width: 1600px;
+            margin: 0 auto;
+        }}
+
         h1 {{
             text-align: center;
-            color: white;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
-            margin-bottom: 20px;
+            margin-bottom: 30px;
+            font-size: 2em;
+            color: #60a5fa;
+            text-shadow: 0 0 20px rgba(96, 165, 250, 0.5);
         }}
-        #mynetwork {{
-            width: 100%;
-            height: 700px;
-            border: 2px solid rgba(255,255,255,0.3);
-            background: linear-gradient(to bottom, #1a1a2e, #16213e);
-            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
-            border-radius: 10px;
-            cursor: grab;
-            margin-bottom: 20px;
-        }}
-        #mynetwork:active {{
-            cursor: grabbing;
-        }}
-        .legend {{
-            margin: 20px auto;
-            padding: 20px;
-            background: rgba(255, 255, 255, 0.95);
-            border: 1px solid rgba(255,255,255,0.3);
-            border-radius: 10px;
-            max-width: 900px;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
-        }}
-        .legend h3 {{
-            margin-top: 0;
-            color: #333;
-        }}
-        .legend-item {{
-            display: inline-block;
-            margin-right: 25px;
-            margin-bottom: 10px;
-        }}
-        .legend-line {{
-            display: inline-block;
-            width: 50px;
-            height: 4px;
-            vertical-align: middle;
-            margin-right: 8px;
-            border-radius: 2px;
-        }}
-        .device-info {{
-            margin: 20px auto 20px;
-            padding: 20px;
-            background: rgba(255, 255, 255, 0.95);
-            border: 1px solid rgba(255,255,255,0.3);
-            border-radius: 10px;
-            max-width: 900px;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
-        }}
-        .device-info h3 {{
-            margin-top: 0;
-            color: #333;
-        }}
+
         .stats {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin-top: 10px;
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
         }}
-        .stat-box {{
-            padding: 15px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            border-radius: 8px;
-            color: white;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+
+        .stat-card {{
+            background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+            padding: 20px 30px;
+            border-radius: 12px;
+            text-align: center;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+            border: 1px solid #334155;
         }}
+
+        .stat-value {{
+            font-size: 2.5em;
+            font-weight: bold;
+            color: #60a5fa;
+        }}
+
         .stat-label {{
-            font-size: 12px;
-            opacity: 0.9;
+            font-size: 0.9em;
+            color: #94a3b8;
             text-transform: uppercase;
             letter-spacing: 1px;
-        }}
-        .stat-value {{
-            font-size: 32px;
-            font-weight: bold;
             margin-top: 5px;
         }}
-        .link {{
-            stroke-opacity: 0.7;
-            stroke-width: 2px;
+
+        #graph {{
+            width: 100%;
+            height: 700px;
+            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+            border-radius: 12px;
+            border: 2px solid #334155;
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.4);
+            margin-bottom: 20px;
         }}
-        .link:hover {{
-            stroke-opacity: 1;
-            stroke-width: 4px;
-        }}
-        .node {{
-            cursor: grab;
-            filter: drop-shadow(3px 3px 5px rgba(0,0,0,0.5));
-        }}
-        .node:active {{
-            cursor: grabbing;
-        }}
-        .node:hover {{
-            filter: drop-shadow(4px 4px 8px rgba(0,0,0,0.8));
-        }}
-        .node text {{
-            font-size: 11px;
-            font-weight: 600;
-            pointer-events: none;
-            text-anchor: middle;
-            fill: white;
-            text-shadow: 1px 1px 3px rgba(0,0,0,0.9);
-        }}
-        .tooltip {{
-            position: absolute;
-            background: rgba(0, 0, 0, 0.9);
-            color: white;
-            padding: 12px 15px;
-            border-radius: 6px;
-            pointer-events: none;
-            font-size: 13px;
-            display: none;
-            z-index: 1000;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
-            border: 1px solid rgba(255,255,255,0.2);
-        }}
+
         .controls {{
-            text-align: center;
-            margin: 20px auto;
-            max-width: 900px;
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
         }}
+
         .btn {{
-            background: rgba(255, 255, 255, 0.95);
-            border: 2px solid rgba(255,255,255,0.3);
-            padding: 10px 20px;
-            margin: 5px;
-            border-radius: 6px;
+            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
             cursor: pointer;
             font-size: 14px;
             font-weight: 600;
-            transition: all 0.3s ease;
-            color: #667eea;
+            transition: all 0.2s;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
         }}
+
         .btn:hover {{
-            background: white;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
             transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(59, 130, 246, 0.4);
+        }}
+
+        .legend {{
+            background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+            padding: 25px;
+            border-radius: 12px;
+            border: 1px solid #334155;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }}
+
+        .legend h3 {{
+            margin-bottom: 15px;
+            color: #60a5fa;
+        }}
+
+        .legend-section {{
+            margin-bottom: 15px;
+        }}
+
+        .legend-item {{
+            display: inline-flex;
+            align-items: center;
+            margin-right: 20px;
+            margin-bottom: 8px;
+        }}
+
+        .legend-line {{
+            width: 40px;
+            height: 3px;
+            margin-right: 8px;
+            border-radius: 2px;
+        }}
+
+        .legend-node {{
+            width: 16px;
+            height: 16px;
+            border-radius: 4px;
+            margin-right: 8px;
+        }}
+
+        .tooltip {{
+            position: absolute;
+            background: rgba(15, 23, 42, 0.95);
+            border: 1px solid #475569;
+            padding: 12px 16px;
+            border-radius: 8px;
+            pointer-events: none;
+            display: none;
+            z-index: 1000;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+            font-size: 13px;
+            line-height: 1.6;
+        }}
+
+        .tooltip strong {{
+            color: #60a5fa;
+        }}
+
+        .link {{
+            stroke-opacity: 0.6;
+        }}
+
+        .link:hover {{
+            stroke-opacity: 1;
+            stroke-width: 4 !important;
+        }}
+
+        .node {{
+            cursor: pointer;
+            filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
+        }}
+
+        .node:hover {{
+            filter: drop-shadow(0 4px 8px rgba(96, 165, 250, 0.6));
+        }}
+
+        .node-label {{
+            font-size: 11px;
+            font-weight: 600;
+            fill: white;
+            text-anchor: middle;
+            pointer-events: none;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
         }}
     </style>
 </head>
 <body>
-    <h1>🌐 Network Topology - Interactive Graph</h1>
+    <div class="container">
+        <h1>🌐 Network Topology</h1>
 
-    <div class="device-info">
-        <h3>Network Statistics</h3>
         <div class="stats">
-            <div class="stat-box">
-                <div class="stat-label">Total Devices</div>
+            <div class="stat-card">
                 <div class="stat-value" id="deviceCount">0</div>
+                <div class="stat-label">Devices</div>
             </div>
-            <div class="stat-box">
-                <div class="stat-label">Total Connections</div>
-                <div class="stat-value" id="connectionCount">0</div>
+            <div class="stat-card">
+                <div class="stat-value" id="linkCount">0</div>
+                <div class="stat-label">Links</div>
             </div>
-            <div class="stat-box">
-                <div class="stat-label">Network Devices</div>
-                <div class="stat-value" id="switchCount">0</div>
+            <div class="stat-card">
+                <div class="stat-value" id="speedAvg">—</div>
+                <div class="stat-label">Avg Speed</div>
             </div>
+        </div>
+
+        <div class="controls">
+            <button class="btn" onclick="resetLayout()">🔄 Reset Layout</button>
+            <button class="btn" onclick="zoomIn()">🔍 Zoom In</button>
+            <button class="btn" onclick="zoomOut()">🔍 Zoom Out</button>
+            <button class="btn" onclick="fitView()">⤢ Fit View</button>
+        </div>
+
+        <div id="graph"></div>
+
+        <div class="legend">
+            <h3>Legend</h3>
+            <div class="legend-section">
+                <strong>Link Speeds:</strong><br>
+                <div style="margin-top: 10px;">
+                    <div class="legend-item">
+                        <div class="legend-line" style="background: #ef4444;"></div>
+                        <span>Unknown / Down</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-line" style="background: #f59e0b;"></div>
+                        <span>100M</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-line" style="background: #3b82f6;"></div>
+                        <span>1G</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-line" style="background: #10b981;"></div>
+                        <span>10G</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-line" style="background: #8b5cf6;"></div>
+                        <span>40G+</span>
+                    </div>
+                </div>
+            </div>
+            <div class="legend-section" style="margin-top: 15px;">
+                <strong>Device Types:</strong><br>
+                <div style="margin-top: 10px;">
+                    <div class="legend-item">
+                        <div class="legend-node" style="background: #3b82f6;"></div>
+                        <span>Switches (Arista/Aruba)</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-node" style="background: #10b981;"></div>
+                        <span>MikroTik</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-node" style="background: #f59e0b;"></div>
+                        <span>Servers (Proxmox/Linux)</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-node" style="background: #64748b;"></div>
+                        <span>Other Devices</span>
+                    </div>
+                </div>
+            </div>
+            <p style="margin-top: 15px; color: #94a3b8; font-size: 0.9em;">
+                💡 <strong>Tip:</strong> Drag nodes to reposition • Scroll to zoom • Hover for details
+            </p>
         </div>
     </div>
 
-    <div class="controls">
-        <button class="btn" onclick="resetSimulation()">🔄 Reset Layout</button>
-        <button class="btn" onclick="zoomIn()">🔍+ Zoom In</button>
-        <button class="btn" onclick="zoomOut()">🔍- Zoom Out</button>
-        <button class="btn" onclick="resetZoom()">↔️ Reset Zoom</button>
-    </div>
-
-    <div id="mynetwork"></div>
     <div class="tooltip" id="tooltip"></div>
 
-    <div class="legend">
-        <h3>Legend</h3>
-        <div style="margin-bottom: 15px;">
-            <strong>Connection Speeds:</strong><br>
-            <div class="legend-item">
-                <span class="legend-line" style="background-color: #e74c3c;"></span>
-                <span>Unknown Speed</span>
-            </div>
-            <div class="legend-item">
-                <span class="legend-line" style="background-color: #3498db;"></span>
-                <span>1 Gbps</span>
-            </div>
-            <div class="legend-item">
-                <span class="legend-line" style="background-color: #2ecc71;"></span>
-                <span>10 Gbps</span>
-            </div>
-            <div class="legend-item">
-                <span class="legend-line" style="background-color: #9b59b6;"></span>
-                <span>Other Speeds</span>
-            </div>
-        </div>
-        <p style="margin-top: 15px; color: #666; font-size: 14px;">
-            <strong>Device Types:</strong>
-            <span style="color: #3498db;">●</span> Switches/Arista/Aruba |
-            <span style="color: #27ae60;">●</span> MikroTik |
-            <span style="color: #e67e22;">●</span> Proxmox/Linux |
-            <span style="color: #95a5a6;">●</span> Others
-        </p>
-        <p style="color: #666; font-size: 14px; margin-top: 10px;">
-            💡 <strong>Tip:</strong> Drag nodes to reposition • Scroll to zoom • Hover for details • Nodes have rubber-band physics!
-        </p>
-    </div>
-
     <script>
-        // Network topology data
-        const topologyData = {{
-            "devices": {json.dumps(sorted(all_device_names))},
-            "connections": {json.dumps(connections)}
+        // Network data
+        const networkData = {{
+            nodes: {json.dumps([{{'id': d, 'label': d}} for d in sorted(device_set)])},
+            links: {json.dumps(connections)}
         }};
 
+        console.log('Network data:', networkData);
+
         // Helper functions
-        function getDeviceColor(deviceName) {{
-            const name = deviceName.toLowerCase();
-            if (name.includes('mikrotik')) return '#27ae60';
-            if (name.includes('2930') || name.includes('2520') || name.includes('arista') ||
-                name.includes('aruba') || name.includes('switch') || name.includes('crs')) return '#3498db';
-            if (name.includes('proxmox') || name.includes('linux') || name.includes('nas')) return '#e67e22';
-            return '#95a5a6';
+        function getDeviceColor(name) {{
+            const n = name.toLowerCase();
+            if (n.includes('arista') || n.includes('aruba') || n.includes('2930') || n.includes('2520')) return '#3b82f6';
+            if (n.includes('mikrotik') || n.includes('rb') || n.includes('crs')) return '#10b981';
+            if (n.includes('proxmox') || n.includes('linux') || n.includes('nas')) return '#f59e0b';
+            return '#64748b';
         }}
 
-        function getNodeSize(deviceName) {{
-            const name = deviceName.toLowerCase();
-            if (name.includes('crs326') || name.includes('2930f-48') || name.includes('arista')) return 30;
-            if (name.includes('mikrotik') || name.includes('2520') || name.includes('aruba')) return 25;
-            return 20;
+        function getLinkColor(speed) {{
+            if (!speed || speed === 'Unknown' || speed === 'Down') return '#ef4444';
+            const s = speed.toLowerCase();
+            if (s.includes('100m')) return '#f59e0b';
+            if (s.includes('1g') || s.includes('1000')) return '#3b82f6';
+            if (s.includes('10g') || s.includes('10000')) return '#10b981';
+            if (s.includes('40g') || s.includes('100g')) return '#8b5cf6';
+            return '#ef4444';
         }}
 
-        function getEdgeColor(speed) {{
-            if (!speed || speed === 'Unknown') return '#e74c3c';
-            if (speed.includes('1G') || speed.includes('1000')) return '#3498db';
-            if (speed.includes('10G') || speed.includes('10000')) return '#2ecc71';
-            return '#9b59b6';
+        function getLinkWidth(speed) {{
+            if (!speed || speed === 'Unknown' || speed === 'Down') return 2;
+            const s = speed.toLowerCase();
+            if (s.includes('100m')) return 2;
+            if (s.includes('1g')) return 3;
+            if (s.includes('10g')) return 4;
+            if (s.includes('40g') || s.includes('100g')) return 5;
+            return 2;
         }}
-
-        // Collect all unique devices
-        const allDevices = new Set(topologyData.devices);
-        topologyData.connections.forEach(conn => {{
-            allDevices.add(conn.local_device);
-            allDevices.add(conn.remote_device);
-        }});
-
-        // Create nodes
-        const nodes = Array.from(allDevices).map(device => ({{
-            id: device,
-            label: device,
-            color: getDeviceColor(device),
-            size: getNodeSize(device)
-        }}));
-
-        // Create edges (deduplicate bidirectional connections)
-        const edgeMap = new Map();
-        topologyData.connections.forEach(conn => {{
-            const key1 = `${{conn.local_device}}-${{conn.remote_device}}`;
-            const key2 = `${{conn.remote_device}}-${{conn.local_device}}`;
-
-            if (!edgeMap.has(key1) && !edgeMap.has(key2)) {{
-                edgeMap.set(key1, {{
-                    source: conn.local_device,
-                    target: conn.remote_device,
-                    color: getEdgeColor(conn.local_speed),
-                    localPort: conn.local_port || '?',
-                    remotePort: conn.remote_port || '?',
-                    speed: conn.local_speed || 'Unknown'
-                }});
-            }}
-        }});
-
-        const links = Array.from(edgeMap.values());
 
         // Update statistics
-        document.getElementById('deviceCount').textContent = nodes.length;
-        document.getElementById('connectionCount').textContent = links.length;
-        document.getElementById('switchCount').textContent =
-            nodes.filter(n => {{
-                const name = n.label.toLowerCase();
-                return name.includes('2930') || name.includes('2520') ||
-                       name.includes('crs') || name.includes('arista') ||
-                       name.includes('aruba') || name.includes('switch');
-            }}).length;
+        document.getElementById('deviceCount').textContent = networkData.nodes.length;
+        document.getElementById('linkCount').textContent = networkData.links.length;
 
-        // D3.js force-directed graph
-        const width = document.getElementById('mynetwork').clientWidth;
-        const height = 700;
+        // Calculate average speed
+        const speeds = networkData.links.map(l => l.speed).filter(s => s && s !== 'Unknown' && s !== 'Down');
+        if (speeds.length > 0) {{
+            const hasHighSpeed = speeds.some(s => s.includes('10G') || s.includes('40G'));
+            document.getElementById('speedAvg').textContent = hasHighSpeed ? '10G+' : '1G';
+        }}
 
-        const svg = d3.select('#mynetwork')
+        // Setup D3 visualization
+        const container = document.getElementById('graph');
+        const width = container.clientWidth;
+        const height = container.clientHeight;
+
+        const svg = d3.select('#graph')
             .append('svg')
             .attr('width', width)
             .attr('height', height);
 
-        // Add zoom behavior
         const g = svg.append('g');
+
+        // Zoom behavior
         const zoom = d3.zoom()
             .scaleExtent([0.1, 4])
             .on('zoom', (event) => {{
                 g.attr('transform', event.transform);
             }});
+
         svg.call(zoom);
 
-        // Store zoom transform for reset
-        let currentTransform = d3.zoomIdentity;
-
-        // Create force simulation with physics
-        const simulation = d3.forceSimulation(nodes)
-            .force('link', d3.forceLink(links).id(d => d.id).distance(150).strength(0.5))
-            .force('charge', d3.forceManyBody().strength(-600))
+        // Force simulation
+        const simulation = d3.forceSimulation(networkData.nodes)
+            .force('link', d3.forceLink(networkData.links)
+                .id(d => d.id)
+                .distance(200))
+            .force('charge', d3.forceManyBody().strength(-800))
             .force('center', d3.forceCenter(width / 2, height / 2))
-            .force('collision', d3.forceCollide().radius(60));
+            .force('collision', d3.forceCollide().radius(50));
 
         // Create links
         const link = g.append('g')
             .selectAll('line')
-            .data(links)
+            .data(networkData.links)
             .join('line')
             .attr('class', 'link')
-            .attr('stroke', d => d.color)
-            .on('mouseover', function(event, d) {{
-                d3.select('#tooltip')
-                    .style('display', 'block')
-                    .style('left', (event.pageX + 10) + 'px')
-                    .style('top', (event.pageY - 10) + 'px')
-                    .html(`<strong>Connection</strong><br>
-                           ${{d.source.id}}:<strong>${{d.localPort}}</strong> ↔
-                           ${{d.target.id}}:<strong>${{d.remotePort}}</strong><br>
-                           Speed: <strong>${{d.speed}}</strong>`);
-            }})
-            .on('mouseout', function() {{
-                d3.select('#tooltip').style('display', 'none');
-            }});
+            .attr('stroke', d => getLinkColor(d.speed))
+            .attr('stroke-width', d => getLinkWidth(d.speed))
+            .on('mouseover', showLinkTooltip)
+            .on('mouseout', hideTooltip);
 
         // Create nodes
         const node = g.append('g')
             .selectAll('g')
-            .data(nodes)
+            .data(networkData.nodes)
             .join('g')
             .attr('class', 'node')
             .call(d3.drag()
-                .on('start', dragstarted)
-                .on('drag', dragged)
-                .on('end', dragended));
+                .on('start', dragStart)
+                .on('drag', dragging)
+                .on('end', dragEnd));
 
         node.append('rect')
-            .attr('width', d => d.size * 2.8)
-            .attr('height', d => d.size * 1.6)
-            .attr('x', d => -d.size * 1.4)
-            .attr('y', d => -d.size * 0.8)
+            .attr('width', 90)
+            .attr('height', 32)
+            .attr('x', -45)
+            .attr('y', -16)
             .attr('rx', 6)
-            .attr('fill', d => d.color)
-            .attr('stroke', '#fff')
-            .attr('stroke-width', 2.5);
+            .attr('fill', d => getDeviceColor(d.id))
+            .attr('stroke', '#475569')
+            .attr('stroke-width', 2);
 
         node.append('text')
-            .text(d => d.label)
+            .attr('class', 'node-label')
             .attr('dy', 4)
-            .on('mouseover', function(event, d) {{
-                const connections = links.filter(l =>
-                    l.source.id === d.id || l.target.id === d.id
-                );
-                d3.select('#tooltip')
-                    .style('display', 'block')
-                    .style('left', (event.pageX + 10) + 'px')
-                    .style('top', (event.pageY - 10) + 'px')
-                    .html(`<strong>${{d.label}}</strong><br>
-                           Type: ${{getDeviceType(d.label)}}<br>
-                           Connections: <strong>${{connections.length}}</strong>`);
-            }})
-            .on('mouseout', function() {{
-                d3.select('#tooltip').style('display', 'none');
-            }});
+            .text(d => d.label.length > 12 ? d.label.substring(0, 10) + '...' : d.label)
+            .on('mouseover', showNodeTooltip)
+            .on('mouseout', hideTooltip);
+
+        // Tooltip functions
+        function showLinkTooltip(event, d) {{
+            const tooltip = d3.select('#tooltip');
+            tooltip.style('display', 'block')
+                .style('left', (event.pageX + 10) + 'px')
+                .style('top', (event.pageY - 10) + 'px')
+                .html(`
+                    <strong>Connection</strong><br>
+                    ${{d.source.id}} : <strong>${{d.source_port}}</strong><br>
+                    ${{d.target.id}} : <strong>${{d.target_port}}</strong><br>
+                    Speed: <strong style="color: ${{getLinkColor(d.speed)}};">${{d.speed}}</strong>
+                `);
+        }}
+
+        function showNodeTooltip(event, d) {{
+            const connections = networkData.links.filter(l =>
+                l.source.id === d.id || l.target.id === d.id
+            );
+            const tooltip = d3.select('#tooltip');
+            tooltip.style('display', 'block')
+                .style('left', (event.pageX + 10) + 'px')
+                .style('top', (event.pageY - 10) + 'px')
+                .html(`
+                    <strong>${{d.label}}</strong><br>
+                    Type: ${{getDeviceType(d.label)}}<br>
+                    Connections: <strong>${{connections.length}}</strong>
+                `);
+        }}
+
+        function hideTooltip() {{
+            d3.select('#tooltip').style('display', 'none');
+        }}
 
         function getDeviceType(name) {{
             const n = name.toLowerCase();
-            if (n.includes('mikrotik')) return 'MikroTik Device';
             if (n.includes('arista')) return 'Arista Switch';
             if (n.includes('aruba') || n.includes('2930') || n.includes('2520')) return 'HP Aruba Switch';
+            if (n.includes('mikrotik') || n.includes('rb') || n.includes('crs')) return 'MikroTik Device';
             if (n.includes('proxmox')) return 'Proxmox Host';
             if (n.includes('linux') || n.includes('nas')) return 'Linux Server';
             return 'Network Device';
         }}
 
-        // Update positions on each tick
+        // Simulation tick
         simulation.on('tick', () => {{
             link
                 .attr('x1', d => d.source.x)
@@ -3593,32 +3629,30 @@ class LLDPDiscovery:
                 .attr('x2', d => d.target.x)
                 .attr('y2', d => d.target.y);
 
-            node
-                .attr('transform', d => `translate(${{d.x}},${{d.y}})`);
+            node.attr('transform', d => `translate(${{d.x}},${{d.y}})`);
         }});
 
-        // Drag functions with rubber-band physics
-        function dragstarted(event, d) {{
+        // Drag functions
+        function dragStart(event, d) {{
             if (!event.active) simulation.alphaTarget(0.3).restart();
             d.fx = d.x;
             d.fy = d.y;
         }}
 
-        function dragged(event, d) {{
+        function dragging(event, d) {{
             d.fx = event.x;
             d.fy = event.y;
         }}
 
-        function dragended(event, d) {{
+        function dragEnd(event, d) {{
             if (!event.active) simulation.alphaTarget(0);
-            // Release fixed position for rubber-band effect
             d.fx = null;
             d.fy = null;
         }}
 
         // Control functions
-        function resetSimulation() {{
-            nodes.forEach(d => {{
+        function resetLayout() {{
+            networkData.nodes.forEach(d => {{
                 d.fx = null;
                 d.fy = null;
             }});
@@ -3626,14 +3660,14 @@ class LLDPDiscovery:
         }}
 
         function zoomIn() {{
-            svg.transition().call(zoom.scaleBy, 1.3);
+            svg.transition().call(zoom.scaleBy, 1.5);
         }}
 
         function zoomOut() {{
-            svg.transition().call(zoom.scaleBy, 0.7);
+            svg.transition().call(zoom.scaleBy, 0.67);
         }}
 
-        function resetZoom() {{
+        function fitView() {{
             svg.transition().call(zoom.transform, d3.zoomIdentity);
         }}
     </script>
@@ -3641,10 +3675,12 @@ class LLDPDiscovery:
 </html>'''
 
         # Write to file
-        with open(output_file, 'w') as f:
-            f.write(html_content)
-
-        self.logger.info(f"D3.js interactive visualization saved to {output_file}")
+        try:
+            with open(output_file, 'w', encoding='utf-8') as f:
+                f.write(html_content)
+            self.logger.info(f"✓ D3 visualization saved to {output_file}")
+        except Exception as e:
+            self.logger.error(f"Failed to write visualization: {e}")
 
 
 def create_sample_config(filename: str = 'devices.json'):
