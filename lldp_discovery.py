@@ -2212,6 +2212,11 @@ class LLDPDiscovery:
 
         # Test SNMP connection if enabled
         if device.use_snmp:
+            if not SNMP_AVAILABLE:
+                self.logger.error(f"✗ {device.hostname} - SNMP requested but pysnmp not installed")
+                self.logger.error("Install pysnmp with: pip install pysnmp")
+                return False
+
             self.logger.info(f"Testing SNMP connectivity to {device.hostname}...")
             try:
                 snmp_collector = SNMPLLDPCollector(device)
