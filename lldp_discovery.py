@@ -568,6 +568,16 @@ class SSHConnection:
                         shell.recv(65535)
                     except:
                         pass
+
+                # Check for Arista "press RETURN" prompt
+                if 'press return' in initial_output.lower() or 'press enter' in initial_output.lower():
+                    self.logger.debug("Detected Arista 'press RETURN' prompt, sending enter")
+                    shell.send('\n')
+                    time.sleep(0.5)
+                    try:
+                        shell.recv(65535)  # Discard prompt continuation
+                    except:
+                        pass
             except:
                 initial_output = ""
 
@@ -591,11 +601,19 @@ class SSHConnection:
                 except Exception as e:
                     self.logger.warning(f"Error entering enable mode: {e}")
 
-            # Disable terminal paging for Aruba/Arista devices
-            if self.device.device_type in ['aruba', 'arista', 'ruijie']:
+            # Disable terminal paging for Aruba/Arista/Ruijie devices
+            if self.device.device_type in ['aruba', 'ruijie']:
                 self.logger.debug("Disabling paging with 'no page' command")
                 try:
                     shell.send('no page\n')
+                    time.sleep(0.5)
+                    shell.recv(65535)
+                except Exception as e:
+                    self.logger.debug(f"Error disabling paging (non-critical): {e}")
+            elif self.device.device_type == 'arista':
+                self.logger.debug("Disabling paging with 'terminal length 0' command")
+                try:
+                    shell.send('terminal length 0\n')
                     time.sleep(0.5)
                     shell.recv(65535)
                 except Exception as e:
@@ -634,6 +652,10 @@ class SSHConnection:
                             self.logger.debug(f"Recv timeout/exception after getting data: {e}")
                             break
                         time.sleep(0.1)
+
+                # Strip ANSI escape sequences (common in Arista output)
+                ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+                output = ansi_escape.sub('', output)
 
                 # Clean up output
                 lines = output.split('\n')
@@ -686,6 +708,16 @@ class SSHConnection:
                         shell.recv(65535)  # Discard banner continuation
                     except:
                         pass
+
+                # Check for Arista "press RETURN" prompt
+                if 'press return' in initial_output.lower() or 'press enter' in initial_output.lower():
+                    self.logger.debug("Detected Arista 'press RETURN' prompt, sending enter")
+                    shell.send('\n')
+                    time.sleep(0.5)
+                    try:
+                        shell.recv(65535)  # Discard prompt continuation
+                    except:
+                        pass
             except:
                 initial_output = ""
 
@@ -709,11 +741,19 @@ class SSHConnection:
                 except Exception as e:
                     self.logger.warning(f"Error entering enable mode: {e}")
 
-            # Disable terminal paging for Aruba/Arista devices
-            if self.device.device_type in ['aruba', 'arista', 'ruijie']:
+            # Disable terminal paging for Aruba/Arista/Ruijie devices
+            if self.device.device_type in ['aruba', 'ruijie']:
                 self.logger.debug("Disabling paging with 'no page' command")
                 try:
                     shell.send('no page\n')
+                    time.sleep(0.5)
+                    shell.recv(65535)  # Discard output
+                except Exception as e:
+                    self.logger.debug(f"Error disabling paging (non-critical): {e}")
+            elif self.device.device_type == 'arista':
+                self.logger.debug("Disabling paging with 'terminal length 0' command")
+                try:
+                    shell.send('terminal length 0\n')
                     time.sleep(0.5)
                     shell.recv(65535)  # Discard output
                 except Exception as e:
@@ -760,6 +800,11 @@ class SSHConnection:
 
             self.logger.debug(f"Raw output length: {len(output)}")
             self.logger.debug(f"Raw output (first 500 chars): {output[:500]}")
+
+            # Strip ANSI escape sequences (common in Arista output)
+            # Pattern matches: ESC[...m (colors), ESC[K (erase line), ESC[...digit (cursor movement)
+            ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+            output = ansi_escape.sub('', output)
 
             # Clean up output - remove command echo and prompt
             lines = output.split('\n')
@@ -816,7 +861,7 @@ class PortSpeedDetector:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
             # Version identifier for debugging
-            LOG_VERSION = "v2.1-aruba-fix"
+            LOG_VERSION = "v2.2-arista-fix"
 
             with open(log_filename, 'a') as f:
                 f.write("\n" + "=" * 100 + "\n")
