@@ -2066,13 +2066,32 @@ class SNMPLLDPCollector:
     def _parse_snmp_response(self, response: bytes) -> Optional[Dict[str, any]]:
         """Parse SNMP response packet"""
         try:
-            self.logger.debug(f"Parsing SNMP response: {response.hex()}")
+            self.logger.debug(f"Parsing SNMP response ({len(response)} bytes): {response.hex()}")
 
-            # Use lenient decoding
-            message, remainder = decoder.decode(response, recursiveFlag=True, substrateFun=lambda a,b,c: (a,b))
+            # Check the outer SEQUENCE length
+            # Format: 0x30 <length> <data>
+            if response[0] != 0x30:
+                self.logger.error(f"Invalid SNMP response: doesn't start with SEQUENCE (0x30)")
+                return None
 
-            self.logger.debug(f"Decoded message type: {type(message)}")
-            self.logger.debug(f"Message components: {len(message)}")
+            # Get the declared length from byte 1
+            declared_length = response[1]
+            actual_data_length = len(response) - 2  # minus tag and length bytes
+
+            self.logger.debug(f"Declared length: {declared_length}, Actual: {actual_data_length}")
+
+            # If there's a mismatch, truncate or pad the response
+            if declared_length > actual_data_length:
+                self.logger.warning(f"Response declares {declared_length} bytes but only {actual_data_length} available - padding with zeros")
+                response = response + b'\x00' * (declared_length - actual_data_length)
+            elif declared_length < actual_data_length:
+                self.logger.debug(f"Truncating response to declared length")
+                response = response[:2 + declared_length]
+
+            # Now decode
+            message, remainder = decoder.decode(response)
+
+            self.logger.debug(f"Decoded successfully, type: {type(message)}")
 
             # Extract version, community, PDU
             version = int(message[0])
@@ -2080,15 +2099,13 @@ class SNMPLLDPCollector:
             pdu = message[2]
 
             self.logger.debug(f"SNMP version: {version}, community: {community}")
-            self.logger.debug(f"PDU components: {len(pdu)}")
 
             request_id = int(pdu[0])
             error_status = int(pdu[1])
             error_index = int(pdu[2])
             varbinds = pdu[3]
 
-            self.logger.debug(f"Request ID: {request_id}, Error: {error_status}, Index: {error_index}")
-            self.logger.debug(f"Varbinds: {len(varbinds)}")
+            self.logger.debug(f"Request ID: {request_id}, Error: {error_status}, Varbinds: {len(varbinds)}")
 
             if error_status != 0:
                 # SNMP error codes: 1=tooBig, 2=noSuchName, 3=badValue, 4=readOnly, 5=genErr
