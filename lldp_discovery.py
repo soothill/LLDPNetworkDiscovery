@@ -3268,7 +3268,10 @@ class LLDPDiscovery:
         """Generate clean, modern interactive D3.js force-directed graph visualization"""
 
         # Collect unique devices and create node list
-        device_set = set()
+        # Start with all configured devices (so isolated devices appear)
+        device_set = set([d.hostname for d in self.devices])
+
+        # Add any discovered devices from LLDP neighbors
         for neighbor in self.neighbors:
             device_set.add(neighbor.local_device)
             device_set.add(neighbor.remote_device)
