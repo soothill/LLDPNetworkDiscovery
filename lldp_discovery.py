@@ -864,7 +864,7 @@ class PortSpeedDetector:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
             # Version identifier for debugging
-            LOG_VERSION = "v2.5-filter-vlan-interfaces"
+            LOG_VERSION = "v2.6-arista-speed-regex-fix"
 
             # On first write of the run, clear the log file
             write_mode = 'w' if not PortSpeedDetector._log_initialized else 'a'
@@ -1098,49 +1098,54 @@ class PortSpeedDetector:
                 # No desc:      "Et8/1                                  notconnect   1        full   10G    Not Present"
                 # Port channel: "Po1        Link-to-Office-10G-Switch   notconnect   trunk    full   unconf N/A"
 
-                # Skip header line
-                if line.startswith('Port') or line.startswith('-'):
+                # Skip header line and empty lines
+                if not line.strip() or line.startswith('Port') or line.startswith('-'):
                     continue
 
                 parts = line.split()
-                if len(parts) >= 2:
-                    interface = parts[0]
+                if len(parts) < 2:
+                    continue
 
-                    # Match against normalized port names
-                    if interface in normalized_mapping:
-                        detected_speed = None
+                interface = parts[0]
 
-                        # The speed column is not at a fixed position due to variable-length descriptions
-                        # Look for speed patterns in the entire line: "10G", "40G", "1G", "100M", "a-1G" (auto), "unconf"
-                        # Speed appears after duplex (full/half/a-full/a-half) and before Type column
+                # ONLY process ports we're actually looking for (i.e., ports with LLDP neighbors)
+                if interface not in normalized_mapping:
+                    continue
 
-                        # First check for "unconf" (unconfigured port channel)
-                        if 'unconf' in line:
-                            detected_speed = "Unknown"
-                            debug_info.append(f"Port {interface} is unconfigured (port channel)")
-                        else:
-                            # Look for speed pattern - must have full word boundary
-                            # Match patterns: 10G, 40G, 1G, 100M, a-10G (auto-negotiated)
-                            speed_match = re.search(r'\b(?:a-)?(\d+(?:\.\d+)?[GM])\b', line, re.IGNORECASE)
+                detected_speed = None
 
-                            if speed_match:
-                                detected_speed = speed_match.group(1).upper()
-                                debug_info.append(f"Found speed for {interface}: {detected_speed} from line: {line.strip()}")
-                            elif 'connected' in line.lower():
-                                # If connected but no speed found, mark as Link Up
-                                detected_speed = "Link Up"
-                                debug_info.append(f"Port {interface} is connected but no speed found: {line.strip()}")
-                            elif 'notconnect' in line.lower():
-                                detected_speed = "Down"
-                                debug_info.append(f"Port {interface} is not connected")
-                            else:
-                                detected_speed = "Unknown"
-                                debug_info.append(f"Port {interface} status unknown: {line.strip()}")
+                # The speed column is not at a fixed position due to variable-length descriptions
+                # Look for speed patterns in the entire line: "10G", "40G", "1G", "100M", "a-1G" (auto), "unconf"
+                # Speed appears after duplex (full/half/a-full/a-half) and before Type column
 
-                        # Apply to all original ports that map to this normalized name
-                        for original_port in normalized_mapping[interface]:
-                            speeds[original_port] = detected_speed
-                            debug_info.append(f"  Mapped {interface} -> {original_port} = {detected_speed}")
+                # First check for "unconf" (unconfigured port channel)
+                if 'unconf' in line:
+                    detected_speed = "Unknown"
+                    debug_info.append(f"Port {interface} is unconfigured (port channel)")
+                else:
+                    # Look for speed pattern after the duplex field
+                    # Match patterns like: "full   10G", "a-full a-10G", "full   40G"
+                    # This ensures we match the speed column, not VLAN numbers or other data
+                    speed_match = re.search(r'(?:full|half|a-full|a-half)\s+(?:a-)?(\d+(?:\.\d+)?[GM])\b', line, re.IGNORECASE)
+
+                    if speed_match:
+                        detected_speed = speed_match.group(1).upper()
+                        debug_info.append(f"Found speed for {interface}: {detected_speed} from line: {line.strip()}")
+                    elif 'connected' in line.lower():
+                        # If connected but no speed found, mark as Link Up
+                        detected_speed = "Link Up"
+                        debug_info.append(f"Port {interface} is connected but no speed found: {line.strip()}")
+                    elif 'notconnect' in line.lower():
+                        detected_speed = "Down"
+                        debug_info.append(f"Port {interface} is not connected")
+                    else:
+                        detected_speed = "Unknown"
+                        debug_info.append(f"Port {interface} status unknown: {line.strip()}")
+
+                # Apply to all original ports that map to this normalized name
+                for original_port in normalized_mapping[interface]:
+                    speeds[original_port] = detected_speed
+                    debug_info.append(f"  Mapped {interface} -> {original_port} = {detected_speed}")
 
         # Fill in unknowns
         for port in ports:
