@@ -173,7 +173,7 @@ class SSHConnection:
                         transport_module.Transport._preferred_keys = tuple(final_keys)
                         self.logger.debug(f"Enabled host key algorithms: {final_keys}")
 
-                        # Build list of available KEX algorithms
+                        # Build list of available KEX algorithms (modern first, then legacy)
                         available_kex = [
                             'ecdh-sha2-nistp256',
                             'ecdh-sha2-nistp384',
@@ -181,20 +181,66 @@ class SSHConnection:
                             'diffie-hellman-group16-sha512',
                             'diffie-hellman-group-exchange-sha256',
                             'diffie-hellman-group14-sha256',
-                            'diffie-hellman-group-exchange-sha1',  # Legacy
-                            'diffie-hellman-group14-sha1',  # Legacy
                         ]
 
-                        # Only add group1-sha1 if available (very old, often removed)
+                        # Try to enable legacy KEX algorithms (often removed in newer paramiko)
+                        # These are critical for older HP Aruba switches
+
+                        # Try to add group14-sha1 (needed for many HP Aruba switches)
+                        try:
+                            from paramiko.kex_group14 import KexGroup14SHA1
+                            available_kex.append('diffie-hellman-group14-sha1')
+                            self.logger.debug("Added diffie-hellman-group14-sha1 KEX algorithm")
+                        except ImportError:
+                            # It might still be available even if we can't import the class
+                            available_kex.append('diffie-hellman-group14-sha1')
+                            self.logger.debug("Added diffie-hellman-group14-sha1 (fallback)")
+
+                        # Add group-exchange-sha1
+                        available_kex.append('diffie-hellman-group-exchange-sha1')
+
+                        # Try to add group1-sha1 (very old, often removed)
                         try:
                             from paramiko.kex_group1 import KexGroup1
                             available_kex.append('diffie-hellman-group1-sha1')
                             self.logger.debug("Added diffie-hellman-group1-sha1 KEX algorithm")
                         except ImportError:
-                            self.logger.debug("diffie-hellman-group1-sha1 not available")
+                            self.logger.debug("diffie-hellman-group1-sha1 not available (very old algorithm)")
 
                         transport_module.Transport._preferred_kex = tuple(available_kex)
-                        self.logger.debug(f"Enabled KEX algorithms: {len(available_kex)} algorithms")
+                        self.logger.debug(f"Enabled {len(available_kex)} KEX algorithms: {', '.join(available_kex[:3])}... (showing first 3)")
+
+                        # Also enable legacy ciphers and MACs for very old devices
+                        # Store original cipher and MAC preferences
+                        original_ciphers = transport_module.Transport._preferred_ciphers
+                        original_macs = transport_module.Transport._preferred_macs
+
+                        # Add legacy ciphers (AES in CBC mode, 3DES)
+                        legacy_ciphers = list(original_ciphers) if original_ciphers else []
+                        legacy_ciphers.extend([
+                            'aes128-cbc',
+                            'aes192-cbc',
+                            'aes256-cbc',
+                            '3des-cbc',
+                        ])
+                        # Remove duplicates while preserving order
+                        seen = set()
+                        legacy_ciphers = [x for x in legacy_ciphers if not (x in seen or seen.add(x))]
+                        transport_module.Transport._preferred_ciphers = tuple(legacy_ciphers)
+
+                        # Add legacy MACs
+                        legacy_macs = list(original_macs) if original_macs else []
+                        legacy_macs.extend([
+                            'hmac-sha1',
+                            'hmac-sha1-96',
+                            'hmac-md5',
+                        ])
+                        # Remove duplicates while preserving order
+                        seen = set()
+                        legacy_macs = [x for x in legacy_macs if not (x in seen or seen.add(x))]
+                        transport_module.Transport._preferred_macs = tuple(legacy_macs)
+
+                        self.logger.debug(f"Added {len(legacy_ciphers)} ciphers and {len(legacy_macs)} MACs (including legacy)")
 
                         # Retry connection with legacy algorithms
                         self.logger.debug(f"Attempting connection with {len(final_keys)} host key algorithms and {len(available_kex)} KEX algorithms")
@@ -205,6 +251,8 @@ class SSHConnection:
                         transport_module.Transport._preferred_keys = original_preferred_keys
                         transport_module.Transport._preferred_kex = original_preferred_kex
                         transport_module.Transport._key_info = original_key_info
+                        transport_module.Transport._preferred_ciphers = original_ciphers
+                        transport_module.Transport._preferred_macs = original_macs
                         # Restore paramiko logging level
                         paramiko_logger.setLevel(original_level)
                 else:
