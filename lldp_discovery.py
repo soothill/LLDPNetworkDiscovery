@@ -2217,7 +2217,6 @@ class LLDPDiscovery:
                 snmp_collector = SNMPLLDPCollector(device)
 
                 # Try a simple SNMP query to verify connectivity
-                from pysnmp.hlapi import *
                 community = CommunityData(device.snmp_community or 'public')
                 target = UdpTransportTarget((device.ip_address, device.snmp_port), timeout=5, retries=1)
 
