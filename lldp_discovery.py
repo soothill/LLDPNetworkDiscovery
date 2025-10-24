@@ -2015,13 +2015,13 @@ class SNMPLLDPCollector:
         neighbors = []
 
         if self.device.snmp_version == '2c':
-            # v3arch doesn't use .create() - objects are ready to use
-            community = CommunityData(self.device.snmp_community or 'public')
+            # v3arch requires await on .create() calls
+            community = await CommunityData(self.device.snmp_community or 'public').create()
         else:
             self.logger.error(f"SNMP version {self.device.snmp_version} not yet supported")
             return neighbors
 
-        target = UdpTransportTarget((self.device.ip_address, self.device.snmp_port))
+        target = await UdpTransportTarget((self.device.ip_address, self.device.snmp_port)).create()
 
         try:
             # First, get local port descriptions to map port IDs to interface names
@@ -2115,11 +2115,14 @@ class SNMPLLDPCollector:
         results = {}
 
         try:
+            engine = await SnmpEngine().create()
+            context = await ContextData().create()
+
             async for (errorIndication, errorStatus, errorIndex, varBinds) in next_cmd(
-                SnmpEngine(),
+                engine,
                 community,
                 target,
-                ContextData(),
+                context,
                 ObjectType(ObjectIdentity(oid)),
                 lexicographicMode=False
             ):
@@ -2269,16 +2272,18 @@ class LLDPDiscovery:
 
                 # Run async SNMP test
                 async def test_snmp():
-                    # v3arch doesn't use .create() - objects are ready to use
-                    community = CommunityData(device.snmp_community or 'public')
-                    target = UdpTransportTarget((device.ip_address, device.snmp_port))
+                    # v3arch requires await on .create() calls
+                    community = await CommunityData(device.snmp_community or 'public').create()
+                    target = await UdpTransportTarget((device.ip_address, device.snmp_port)).create()
+                    context = await ContextData().create()
+                    engine = await SnmpEngine().create()
 
                     # Query sysName (1.3.6.1.2.1.1.5.0) as a simple connectivity test
                     async for (errorIndication, errorStatus, errorIndex, varBinds) in get_cmd(
-                        SnmpEngine(),
+                        engine,
                         community,
                         target,
-                        ContextData(),
+                        context,
                         ObjectType(ObjectIdentity('1.3.6.1.2.1.1.5.0'))
                     ):
                         if errorIndication:
