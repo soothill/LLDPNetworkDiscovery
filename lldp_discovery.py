@@ -70,7 +70,15 @@ class SSHConnection:
         """Establish SSH connection to device"""
         try:
             self.client = paramiko.SSHClient()
+            # Use AutoAddPolicy to accept unknown host keys (common for network devices)
+            # This is safe for network discovery tools
             self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+            # Also load system host keys to avoid "Invalid key" errors with known hosts
+            try:
+                self.client.load_system_host_keys()
+            except Exception as e:
+                self.logger.debug(f"Could not load system host keys: {e}")
 
             # Enable legacy algorithms for older network devices
             # Get the default transport to modify security options
@@ -348,19 +356,46 @@ class SSHConnection:
                 self.logger.error("")
             return False
         except Exception as e:
-            self.logger.error("")
-            self.logger.error("=" * 70)
-            self.logger.error(f"✗ CONNECTION ERROR - {self.device.hostname}")
-            self.logger.error("=" * 70)
-            self.logger.error(f"Device: {self.device.hostname} ({self.device.ip_address})")
-            self.logger.error(f"Error: {e}")
-            self.logger.error("")
-            self.logger.error("Please check:")
-            self.logger.error("  • Network connectivity to device")
-            self.logger.error("  • Device configuration in devices.json")
-            self.logger.error("  • Device is powered on and accessible")
-            self.logger.error("=" * 70)
-            self.logger.error("")
+            error_str = str(e).lower()
+            if 'invalid key' in error_str or 'bad key' in error_str:
+                self.logger.error("")
+                self.logger.error("=" * 70)
+                self.logger.error(f"✗ HOST KEY ERROR - {self.device.hostname}")
+                self.logger.error("=" * 70)
+                self.logger.error(f"Device: {self.device.hostname} ({self.device.ip_address})")
+                self.logger.error(f"Error: {e}")
+                self.logger.error("")
+                self.logger.error("This error usually means there's a problem with the SSH host key.")
+                self.logger.error("")
+                self.logger.error("Solutions:")
+                self.logger.error("  1. Remove the old host key from known_hosts:")
+                self.logger.error(f"     ssh-keygen -R {self.device.ip_address}")
+                self.logger.error("")
+                self.logger.error("  2. Or remove the specific line from:")
+                self.logger.error(f"     ~/.ssh/known_hosts")
+                self.logger.error("")
+                self.logger.error("  3. Then retry - the tool will auto-accept the new key")
+                self.logger.error("")
+                self.logger.error("This often happens when:")
+                self.logger.error("  • Device was reinstalled/reset")
+                self.logger.error("  • IP address was reassigned to different device")
+                self.logger.error("  • Host key format changed (e.g., RSA to DSS)")
+                self.logger.error("=" * 70)
+                self.logger.error("")
+            else:
+                self.logger.error("")
+                self.logger.error("=" * 70)
+                self.logger.error(f"✗ CONNECTION ERROR - {self.device.hostname}")
+                self.logger.error("=" * 70)
+                self.logger.error(f"Device: {self.device.hostname} ({self.device.ip_address})")
+                self.logger.error(f"Error: {e}")
+                self.logger.error("")
+                self.logger.error("Please check:")
+                self.logger.error("  • Network connectivity to device")
+                self.logger.error("  • Device configuration in devices.json")
+                self.logger.error("  • Device is powered on and accessible")
+                self.logger.error("=" * 70)
+                self.logger.error("")
             return False
 
     def enter_enable_mode(self) -> bool:
