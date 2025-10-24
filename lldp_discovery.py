@@ -822,8 +822,7 @@ class PortSpeedDetector:
                 f.write(f"COMMAND: {command}\n")
                 f.write(f"PORTS REQUESTED: {', '.join(ports)}\n")
                 f.write("-" * 100 + "\n")
-                f.write("RAW OUTPUT:\n")
-                f.write("-" * 100 + "\n")
+                # Output parameter may already contain headers (e.g., "DEBUG INFO:\n...")
                 f.write(output if output else "(empty output)\n")
                 f.write("\n")
                 f.write("-" * 100 + "\n")
@@ -996,9 +995,11 @@ class PortSpeedDetector:
                 speeds[port] = "Unknown"
 
         # Log the detection results with debug info
-        log_output = stdout if exit_code == 0 else "(command failed)"
+        log_output = ""
         if debug_info:
-            log_output = "DEBUG INFO:\n" + "\n".join(debug_info) + "\n\n" + "RAW OUTPUT:\n" + log_output
+            log_output = "DEBUG INFO:\n" + "-" * 100 + "\n" + "\n".join(debug_info) + "\n" + "-" * 100 + "\n\n"
+        log_output += "RAW OUTPUT:\n" + "-" * 100 + "\n"
+        log_output += stdout if exit_code == 0 else "(command failed)"
 
         PortSpeedDetector._log_speed_detection(
             ssh.device.hostname, "MikroTik",
