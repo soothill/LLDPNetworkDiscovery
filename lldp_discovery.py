@@ -20,6 +20,7 @@ from math import cos, sin
 from datetime import datetime
 
 # For SNMP support
+SNMP_AVAILABLE = False
 try:
     from pysnmp.hlapi import (
         CommunityData, UdpTransportTarget, ContextData,
@@ -27,10 +28,14 @@ try:
         getCmd, nextCmd
     )
     SNMP_AVAILABLE = True
-except ImportError as e:
+except (ImportError, AttributeError) as e:
+    # pysnmp not installed or wrong version
+    # The package may be installed but incompatible/broken
     SNMP_AVAILABLE = False
-    print(f"Warning: pysnmp not available. Install with: pip install pysnmp")
-    print(f"Import error: {e}")
+    print(f"Warning: pysnmp not available or incompatible version.")
+    print(f"Try: pip uninstall pysnmp pysnmp-lextudio")
+    print(f"Then: pip install pysnmp==4.4.12")
+    print(f"Error: {e}")
 except Exception as e:
     SNMP_AVAILABLE = False
     print(f"Warning: pysnmp import failed: {e}")
