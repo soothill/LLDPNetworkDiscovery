@@ -49,15 +49,18 @@ if pysnmp:
         print(f"SUCCESS: Using pysnmp 7.x v1arch asyncio API (version {pysnmp_version})")
     except (ImportError, AttributeError, ModuleNotFoundError) as e:
         print(f"DEBUG: v7 v1arch split imports failed: {e}")
-        # Try pysnmp 6.x/7.x with v3arch API
+        # Try pysnmp 6.x/7.x with v3arch API - use new non-deprecated functions
         try:
             from pysnmp.hlapi.v3arch.asyncio import (
                 CommunityData, UdpTransportTarget, ContextData,
                 ObjectType, ObjectIdentity, SnmpEngine
             )
-            from pysnmp.hlapi.v3arch.asyncio.cmdgen import getCmd, nextCmd
+            from pysnmp.hlapi.v3arch.asyncio.cmdgen import get_cmd, next_cmd
+            # Create aliases for backward compatibility
+            getCmd = get_cmd
+            nextCmd = next_cmd
             SNMP_AVAILABLE = True
-            print(f"SUCCESS: Using pysnmp v3arch asyncio API (version {pysnmp_version})")
+            print(f"SUCCESS: Using pysnmp v3arch asyncio API with new functions (version {pysnmp_version})")
         except (ImportError, AttributeError, ModuleNotFoundError) as e:
             print(f"DEBUG: v3arch split imports failed: {e}")
             # Try legacy pysnmp v4/v5 with classic API
@@ -2032,30 +2035,34 @@ class SNMPLLDPCollector:
             raise ImportError("pysnmp library is required for SNMP operations. Install with: pip install pysnmp")
 
     def get_lldp_neighbors(self) -> List[LLDPNeighbor]:
-        """Retrieve LLDP neighbors via SNMP"""
+        """Retrieve LLDP neighbors via SNMP (async wrapper)"""
+        import asyncio
+        return asyncio.run(self._get_lldp_neighbors_async())
+
+    async def _get_lldp_neighbors_async(self) -> List[LLDPNeighbor]:
+        """Retrieve LLDP neighbors via SNMP (async implementation)"""
         neighbors = []
 
         if self.device.snmp_version == '2c':
-            community = CommunityData(self.device.snmp_community or 'public')
+            community = await CommunityData(self.device.snmp_community or 'public').create()
         else:
             self.logger.error(f"SNMP version {self.device.snmp_version} not yet supported")
             return neighbors
 
-        # v3arch asyncio API: UdpTransportTarget takes address tuple only and needs .create()
-        target = UdpTransportTarget((self.device.ip_address, self.device.snmp_port)).create()
+        target = await UdpTransportTarget((self.device.ip_address, self.device.snmp_port)).create()
 
         try:
             # First, get local port descriptions to map port IDs to interface names
-            port_map = self._get_local_port_map(community, target)
+            port_map = await self._get_local_port_map(community, target)
 
             # Get remote system names
-            remote_systems = self._snmp_walk(community, target, self.LLDP_REM_SYS_NAME)
+            remote_systems = await self._snmp_walk(community, target, self.LLDP_REM_SYS_NAME)
 
             # Get remote port IDs
-            remote_ports = self._snmp_walk(community, target, self.LLDP_REM_PORT_ID)
+            remote_ports = await self._snmp_walk(community, target, self.LLDP_REM_PORT_ID)
 
             # Get remote port descriptions
-            remote_descs = self._snmp_walk(community, target, self.LLDP_REM_PORT_DESC)
+            remote_descs = await self._snmp_walk(community, target, self.LLDP_REM_PORT_DESC)
 
             # Parse the LLDP remote table entries
             # OID format: .1.0.8802.1.1.2.1.4.1.1.X.timeMark.localPortNum.remoteIndex
@@ -2105,38 +2112,38 @@ class SNMPLLDPCollector:
 
         return neighbors
 
-    def _get_local_port_map(self, community, target) -> Dict[str, str]:
+    async def _get_local_port_map(self, community, target) -> Dict[str, str]:
         """Map local port numbers to interface names"""
         port_map = {}
 
         # Try lldpLocPortDesc first (LLDP-specific port descriptions)
-        lldp_ports = self._snmp_walk(community, target, self.LLDP_LOC_PORT_DESC)
+        lldp_ports = await self._snmp_walk(community, target, self.LLDP_LOC_PORT_DESC)
         for oid, desc in lldp_ports.items():
             port_num = oid.split('.')[-1]
             port_map[port_num] = desc.strip()
 
         # If that didn't work, try ifName
         if not port_map:
-            if_names = self._snmp_walk(community, target, self.IF_NAME)
+            if_names = await self._snmp_walk(community, target, self.IF_NAME)
             for oid, name in if_names.items():
                 port_num = oid.split('.')[-1]
                 port_map[port_num] = name.strip()
 
         # Last resort: ifDescr
         if not port_map:
-            if_descrs = self._snmp_walk(community, target, self.IF_DESCR)
+            if_descrs = await self._snmp_walk(community, target, self.IF_DESCR)
             for oid, desc in if_descrs.items():
                 port_num = oid.split('.')[-1]
                 port_map[port_num] = desc.strip()
 
         return port_map
 
-    def _snmp_walk(self, community, target, oid: str) -> Dict[str, str]:
-        """Perform SNMP walk and return OID -> value dictionary"""
+    async def _snmp_walk(self, community, target, oid: str) -> Dict[str, str]:
+        """Perform SNMP walk and return OID -> value dictionary (async)"""
         results = {}
 
         try:
-            for (errorIndication, errorStatus, errorIndex, varBinds) in nextCmd(
+            async for (errorIndication, errorStatus, errorIndex, varBinds) in next_cmd(
                 SnmpEngine(),
                 community,
                 target,
@@ -2286,30 +2293,40 @@ class LLDPDiscovery:
 
             self.logger.info(f"Testing SNMP connectivity to {device.hostname}...")
             try:
-                snmp_collector = SNMPLLDPCollector(device)
+                import asyncio
 
-                # Try a simple SNMP query to verify connectivity
-                community = CommunityData(device.snmp_community or 'public')
-                # v3arch asyncio API: UdpTransportTarget needs .create() to be called
-                target = UdpTransportTarget((device.ip_address, device.snmp_port)).create()
+                # Run async SNMP test
+                async def test_snmp():
+                    community = await CommunityData(device.snmp_community or 'public').create()
+                    target = await UdpTransportTarget((device.ip_address, device.snmp_port)).create()
 
-                # Query sysName (1.3.6.1.2.1.1.5.0) as a simple connectivity test
-                # Note: getCmd in asyncio API returns an async iterator, use next() to get first result
-                errorIndication, errorStatus, errorIndex, varBinds = next(
-                    getCmd(SnmpEngine(), community, target, ContextData() if ContextData else None,
-                           ObjectType(ObjectIdentity('1.3.6.1.2.1.1.5.0')))
-                )
+                    # Query sysName (1.3.6.1.2.1.1.5.0) as a simple connectivity test
+                    async for (errorIndication, errorStatus, errorIndex, varBinds) in get_cmd(
+                        SnmpEngine(),
+                        community,
+                        target,
+                        ContextData() if ContextData else None,
+                        ObjectType(ObjectIdentity('1.3.6.1.2.1.1.5.0'))
+                    ):
+                        if errorIndication:
+                            return False, f"SNMP connection failed: {errorIndication}"
+                        elif errorStatus:
+                            return False, f"SNMP error: {errorStatus.prettyPrint()}"
+                        else:
+                            sys_name = str(varBinds[0][1]) if varBinds else "Unknown"
+                            return True, f"SNMP connection successful (sysName: {sys_name})"
 
-                if errorIndication:
-                    self.logger.error(f"✗ {device.hostname} - SNMP connection failed: {errorIndication}")
-                    return False
-                elif errorStatus:
-                    self.logger.error(f"✗ {device.hostname} - SNMP error: {errorStatus.prettyPrint()}")
-                    return False
-                else:
-                    sys_name = str(varBinds[0][1]) if varBinds else "Unknown"
-                    self.logger.info(f"✓ {device.hostname} - SNMP connection successful (sysName: {sys_name})")
+                    return False, "No SNMP response"
+
+                # Run the async test
+                success, message = asyncio.run(test_snmp())
+
+                if success:
+                    self.logger.info(f"✓ {device.hostname} - {message}")
                     return True
+                else:
+                    self.logger.error(f"✗ {device.hostname} - {message}")
+                    return False
 
             except Exception as e:
                 self.logger.error(f"✗ {device.hostname} - SNMP test failed: {e}")
