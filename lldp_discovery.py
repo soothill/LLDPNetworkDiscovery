@@ -1505,6 +1505,18 @@ class LLDPParser:
         """Parse LLDP output from Linux (lldpctl)"""
         neighbors = []
 
+        # Debug: Write raw output to file for inspection
+        import logging
+        logger = logging.getLogger(__name__)
+
+        # Save raw LLDP output for debugging
+        try:
+            with open(f"linux_lldp_debug_{hostname}.txt", 'w') as f:
+                f.write(output)
+            logger.debug(f"Saved Linux LLDP output to linux_lldp_debug_{hostname}.txt")
+        except:
+            pass
+
         # Parse lldpctl output
         current_interface = None
         remote_system = None
@@ -1514,38 +1526,68 @@ class LLDPParser:
         for line in output.split('\n'):
             line = line.strip()
 
-            # Match interface name
+            # Match interface name - handles both formats:
+            # "Interface: eth0, via: LLDP, RID: 1, Time: 0 day, 00:12:34"
+            # "LLDP neighbors:"
             if line.startswith('Interface:'):
-                if current_interface and remote_system and remote_port:
+                # Save previous neighbor if complete
+                if current_interface and remote_system:
                     neighbors.append(LLDPNeighbor(
                         local_device=hostname,
                         local_port=current_interface,
                         remote_device=remote_system,
-                        remote_port=remote_port,
+                        remote_port=remote_port or '',
                         remote_description=remote_desc
                     ))
-                current_interface = line.split(':')[1].strip().rstrip(',')
+                    logger.debug(f"Linux: Found neighbor {remote_system} on {current_interface}")
+
+                # Extract interface name - handle "Interface: eth0, via: LLDP, ..."
+                iface_part = line.split(':')[1].strip()
+                # Take everything before the first comma if present
+                current_interface = iface_part.split(',')[0].strip()
                 remote_system = None
                 remote_port = None
                 remote_desc = None
+                logger.debug(f"Linux: Processing interface {current_interface}")
 
-            elif 'SysName:' in line:
-                remote_system = line.split('SysName:')[1].strip()
-            elif 'PortID:' in line:
-                remote_port = line.split('PortID:')[1].strip()
-            elif 'PortDescr:' in line:
-                remote_desc = line.split('PortDescr:')[1].strip()
+            # Handle various SysName formats
+            elif 'SysName:' in line or 'System Name:' in line:
+                if 'SysName:' in line:
+                    remote_system = line.split('SysName:')[1].strip()
+                else:
+                    remote_system = line.split('System Name:')[1].strip()
+                logger.debug(f"Linux: Found SysName: {remote_system}")
+
+            # Handle various PortID formats
+            elif 'PortID:' in line or 'Port ID:' in line or 'PortDescr:' in line:
+                if 'PortID:' in line:
+                    remote_port = line.split('PortID:')[1].strip()
+                elif 'Port ID:' in line:
+                    remote_port = line.split('Port ID:')[1].strip()
+                elif 'PortDescr:' in line and not remote_port:
+                    # Use PortDescr as fallback if no PortID found
+                    remote_port = line.split('PortDescr:')[1].strip()
+                logger.debug(f"Linux: Found PortID: {remote_port}")
+
+            # Port Description
+            elif 'Port Description:' in line or 'PortDescr:' in line:
+                if 'Port Description:' in line:
+                    remote_desc = line.split('Port Description:')[1].strip()
+                elif 'PortDescr:' in line and not remote_desc:
+                    remote_desc = line.split('PortDescr:')[1].strip()
 
         # Add last neighbor
-        if current_interface and remote_system and remote_port:
+        if current_interface and remote_system:
             neighbors.append(LLDPNeighbor(
                 local_device=hostname,
                 local_port=current_interface,
                 remote_device=remote_system,
-                remote_port=remote_port,
+                remote_port=remote_port or '',
                 remote_description=remote_desc
             ))
+            logger.debug(f"Linux: Found neighbor (last) {remote_system} on {current_interface}")
 
+        logger.info(f"Linux: Parsed {len(neighbors)} LLDP neighbors from {hostname}")
         return neighbors
 
     @staticmethod
