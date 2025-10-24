@@ -791,16 +791,21 @@ class PortSpeedDetector:
     """Detects port speeds for different device types"""
 
     @staticmethod
-    def _clean_port_names(ports: List[str]) -> Dict[str, str]:
+    def _clean_port_names(ports: List[str]) -> Dict[str, List[str]]:
         """
         Clean port names by removing suffixes like ",bridge", ",trunk", etc.
-        Returns mapping of clean_name -> original_name
+        Returns mapping of clean_name -> [list of original_names]
+
+        Multiple ports may have the same clean name (e.g., "eth0,bridge" and "eth0,vlan100")
+        so we need to map one clean name to multiple original names.
         """
         port_mapping = {}
         for port in ports:
             # Extract just the interface name before any comma
             clean_port = port.split(',')[0]
-            port_mapping[clean_port] = port
+            if clean_port not in port_mapping:
+                port_mapping[clean_port] = []
+            port_mapping[clean_port].append(port)
         return port_mapping
 
     @staticmethod
@@ -838,32 +843,40 @@ class PortSpeedDetector:
         all_output = []
 
         # Clean port names - remove suffixes like ",bridge"
+        # Multiple ports may map to same clean name (e.g., "eth0,bridge" and "eth0,vlan100" -> "eth0")
         port_mapping = PortSpeedDetector._clean_port_names(ports)
 
-        for clean_port, original_port in port_mapping.items():
+        for clean_port, original_ports in port_mapping.items():
+            detected_speed = None
+
             # Try ethtool first (with sudo for permission)
             stdout, stderr, exit_code = ssh.execute_command(f"sudo ethtool {clean_port} 2>/dev/null | grep -i speed")
-            all_output.append(f"Port {original_port} ({clean_port}) ethtool:\n{stdout if stdout else '(no output)'}\n")
+            all_output.append(f"Port {clean_port} (for {', '.join(original_ports)}) ethtool:\n{stdout if stdout else '(no output)'}\n")
 
             if exit_code == 0 and stdout:
                 # Parse "Speed: 1000Mb/s" or "Speed: 10000Mb/s"
                 match = re.search(r'Speed:\s*(\d+)Mb/s', stdout, re.IGNORECASE)
                 if match:
                     speed_mbps = int(match.group(1))
-                    speeds[original_port] = PortSpeedDetector._format_speed(speed_mbps)
-                    continue
+                    detected_speed = PortSpeedDetector._format_speed(speed_mbps)
 
             # Fallback: try /sys/class/net (usually readable without sudo)
-            stdout, stderr, exit_code = ssh.execute_command(f"cat /sys/class/net/{clean_port}/speed 2>/dev/null")
-            all_output.append(f"Port {original_port} ({clean_port}) /sys/class/net:\n{stdout if stdout else '(no output)'}\n")
+            if not detected_speed:
+                stdout, stderr, exit_code = ssh.execute_command(f"cat /sys/class/net/{clean_port}/speed 2>/dev/null")
+                all_output.append(f"Port {clean_port} /sys/class/net:\n{stdout if stdout else '(no output)'}\n")
 
-            if exit_code == 0 and stdout.strip().isdigit():
-                speed_mbps = int(stdout.strip())
-                if speed_mbps > 0:
-                    speeds[original_port] = PortSpeedDetector._format_speed(speed_mbps)
-                    continue
+                if exit_code == 0 and stdout.strip().isdigit():
+                    speed_mbps = int(stdout.strip())
+                    if speed_mbps > 0:
+                        detected_speed = PortSpeedDetector._format_speed(speed_mbps)
 
-            speeds[original_port] = "Unknown"
+            # Apply detected speed to ALL original port names that share this clean name
+            if detected_speed:
+                for original_port in original_ports:
+                    speeds[original_port] = detected_speed
+            else:
+                for original_port in original_ports:
+                    speeds[original_port] = "Unknown"
 
         # Log the detection results
         PortSpeedDetector._log_speed_detection(
@@ -900,8 +913,9 @@ class PortSpeedDetector:
                     if current_interface and current_speed:
                         # Check if this interface is in our cleaned port list
                         if current_interface in port_mapping:
-                            original_port = port_mapping[current_interface]
-                            speeds[original_port] = current_speed
+                            # Apply to all original ports that map to this clean name
+                            for original_port in port_mapping[current_interface]:
+                                speeds[original_port] = current_speed
 
                     current_interface = name_match.group(1)
                     current_speed = None
@@ -941,8 +955,9 @@ class PortSpeedDetector:
             # Save last interface
             if current_interface and current_speed:
                 if current_interface in port_mapping:
-                    original_port = port_mapping[current_interface]
-                    speeds[original_port] = current_speed
+                    # Apply to all original ports that map to this clean name
+                    for original_port in port_mapping[current_interface]:
+                        speeds[original_port] = current_speed
 
         # Fill in unknowns for originally requested ports
         for port in ports:
@@ -978,17 +993,22 @@ class PortSpeedDetector:
                 if len(parts) >= 2 and not line.startswith('Port'):
                     interface = parts[0]
                     # Match any port in our cleaned list
-                    for clean_port, original_port in port_mapping.items():
+                    for clean_port, original_ports in port_mapping.items():
                         if clean_port in interface or interface in clean_port:
                             # Look for speed pattern in the line (e.g., "1G", "10G", "100M")
                             speed_match = re.search(r'\b(\d+(?:\.\d+)?[GM](?:b(?:ps)?)?)\b', line, re.IGNORECASE)
+                            detected_speed = None
                             if speed_match:
-                                speeds[original_port] = speed_match.group(1).upper()
+                                detected_speed = speed_match.group(1).upper()
                             elif 'connected' in line.lower():
                                 # If connected but no speed found, mark as Link Up
-                                speeds[original_port] = "Link Up"
+                                detected_speed = "Link Up"
                             else:
-                                speeds[original_port] = "Unknown"
+                                detected_speed = "Unknown"
+
+                            # Apply to all original ports that map to this clean name
+                            for original_port in original_ports:
+                                speeds[original_port] = detected_speed
                             break
 
         # Fill in unknowns
@@ -1025,9 +1045,10 @@ class PortSpeedDetector:
                 parts = line.split()
                 if len(parts) >= 3:
                     port_name = parts[0]
-                    for clean_port, original_port in port_mapping.items():
+                    for clean_port, original_ports in port_mapping.items():
                         # Match port number (e.g., "9" matches port "9")
                         if port_name == clean_port or clean_port in port_name or port_name in clean_port:
+                            detected_speed = None
                             # Look for speed pattern like "1000FDx", "10GigFD", "1000FD", etc.
                             # Speed patterns: 10M, 100M, 1000M, 10G, 1000FDx, 10GigFD, etc.
                             speed_match = re.search(r'(\d+(?:Gig|G|M)(?:FDx|FD|HDx|HD)?)', line, re.IGNORECASE)
@@ -1039,16 +1060,20 @@ class PortSpeedDetector:
                                 if num_match:
                                     speed_num = int(num_match.group(1))
                                     if 'G' in speed_str.upper() or 'GIG' in speed_str.upper():
-                                        speeds[original_port] = f"{speed_num}G"
+                                        detected_speed = f"{speed_num}G"
                                     elif speed_num >= 1000:
                                         # 1000M = 1G
-                                        speeds[original_port] = f"{speed_num // 1000}G"
+                                        detected_speed = f"{speed_num // 1000}G"
                                     else:
-                                        speeds[original_port] = f"{speed_num}M"
+                                        detected_speed = f"{speed_num}M"
                             elif 'Up' in line:
-                                speeds[original_port] = "Link Up"
+                                detected_speed = "Link Up"
                             else:
-                                speeds[original_port] = "Down"
+                                detected_speed = "Down"
+
+                            # Apply to all original ports that map to this clean name
+                            for original_port in original_ports:
+                                speeds[original_port] = detected_speed
                             break
 
         # Fill in unknowns
@@ -1085,7 +1110,7 @@ class PortSpeedDetector:
                 parts = line.split()
                 if len(parts) >= 2 and not line.startswith('Port'):
                     interface = parts[0]
-                    for clean_port, original_port in port_mapping.items():
+                    for clean_port, original_ports in port_mapping.items():
                         if clean_port in interface or interface in clean_port:
                             # Look for speed patterns
                             # Common formats: "a-1000", "1000", "10G", "a-10G", "auto"
@@ -1095,7 +1120,7 @@ class PortSpeedDetector:
                                 r'\b(\d{2,5})(?:\s|$)'               # "1000 ", "100 "
                             ]
 
-                            speed_found = False
+                            detected_speed = None
                             for pattern in speed_patterns:
                                 speed_match = re.search(pattern, line, re.IGNORECASE)
                                 if speed_match:
@@ -1103,18 +1128,21 @@ class PortSpeedDetector:
                                     # Convert to standard format
                                     if speed_str.isdigit():
                                         # Numeric value (e.g., "1000" -> "1G")
-                                        speeds[original_port] = PortSpeedDetector._format_speed(int(speed_str))
+                                        detected_speed = PortSpeedDetector._format_speed(int(speed_str))
                                     else:
                                         # Already has suffix (e.g., "10G")
-                                        speeds[original_port] = speed_str.upper()
-                                    speed_found = True
+                                        detected_speed = speed_str.upper()
                                     break
 
-                            if not speed_found:
+                            if not detected_speed:
                                 if 'connected' in line.lower():
-                                    speeds[original_port] = "Link Up"
+                                    detected_speed = "Link Up"
                                 else:
-                                    speeds[original_port] = "Down"
+                                    detected_speed = "Down"
+
+                            # Apply to all original ports that map to this clean name
+                            for original_port in original_ports:
+                                speeds[original_port] = detected_speed
                             break
 
         # Fill in unknowns
