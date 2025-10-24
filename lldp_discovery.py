@@ -1926,7 +1926,10 @@ class LLDPDiscovery:
                 speed_detectors = {
                     'linux': PortSpeedDetector.get_port_speeds_linux,
                     'mikrotik': PortSpeedDetector.get_port_speeds_mikrotik,
-                    'proxmox': PortSpeedDetector.get_port_speeds_proxmox
+                    'proxmox': PortSpeedDetector.get_port_speeds_proxmox,
+                    'aruba': PortSpeedDetector.get_port_speeds_aruba,
+                    'arista': PortSpeedDetector.get_port_speeds_arista,
+                    'ruijie': PortSpeedDetector.get_port_speeds_ruijie
                 }
 
                 speed_detector = speed_detectors.get(device.device_type)
