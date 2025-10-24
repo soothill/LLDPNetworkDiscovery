@@ -2066,14 +2066,13 @@ class SNMPLLDPCollector:
     def _parse_snmp_response(self, response: bytes) -> Optional[Dict[str, any]]:
         """Parse SNMP response packet"""
         try:
-            self.logger.debug(f"Parsing SNMP response: {response.hex()[:100]}...")
+            self.logger.debug(f"Parsing SNMP response: {response.hex()}")
 
-            # Decode without strict schema - let pyasn1 figure it out
-            message, remainder = decoder.decode(response)
+            # Use lenient decoding
+            message, remainder = decoder.decode(response, recursiveFlag=True, substrateFun=lambda a,b,c: (a,b))
 
             self.logger.debug(f"Decoded message type: {type(message)}")
-            self.logger.debug(f"Message length: {len(message)}")
-            self.logger.debug(f"Remainder: {len(remainder)} bytes")
+            self.logger.debug(f"Message components: {len(message)}")
 
             # Extract version, community, PDU
             version = int(message[0])
@@ -2081,18 +2080,21 @@ class SNMPLLDPCollector:
             pdu = message[2]
 
             self.logger.debug(f"SNMP version: {version}, community: {community}")
-            self.logger.debug(f"PDU type: {type(pdu)}, tag: {pdu.tagSet}")
+            self.logger.debug(f"PDU components: {len(pdu)}")
 
             request_id = int(pdu[0])
             error_status = int(pdu[1])
             error_index = int(pdu[2])
             varbinds = pdu[3]
 
-            self.logger.debug(f"Request ID: {request_id}, Error status: {error_status}, Error index: {error_index}")
-            self.logger.debug(f"Varbinds count: {len(varbinds)}")
+            self.logger.debug(f"Request ID: {request_id}, Error: {error_status}, Index: {error_index}")
+            self.logger.debug(f"Varbinds: {len(varbinds)}")
 
             if error_status != 0:
-                self.logger.warning(f"SNMP error status: {error_status}")
+                # SNMP error codes: 1=tooBig, 2=noSuchName, 3=badValue, 4=readOnly, 5=genErr
+                error_names = {1: 'tooBig', 2: 'noSuchName', 3: 'badValue', 4: 'readOnly', 5: 'genErr'}
+                error_name = error_names.get(error_status, f'error{error_status}')
+                self.logger.warning(f"SNMP error: {error_name} (code {error_status})")
                 return None
 
             # Extract first varbind
@@ -2101,18 +2103,23 @@ class SNMPLLDPCollector:
                 oid = '.'.join(str(x) for x in varbind[0])
                 value = varbind[1]
 
-                # Convert value to string
-                if hasattr(value, 'prettyPrint'):
+                # Handle empty/null values
+                if value is None or (hasattr(value, '__len__') and len(value) == 0):
+                    value_str = ""
+                elif hasattr(value, 'prettyPrint'):
                     value_str = value.prettyPrint()
                 else:
                     value_str = str(value)
 
-                self.logger.debug(f"Parsed OID: {oid}, Value: {value_str}")
+                self.logger.debug(f"OID: {oid}, Value: '{value_str}'")
                 return {'oid': oid, 'value': value_str}
 
+            self.logger.warning("No varbinds in response")
             return None
+
         except Exception as e:
             self.logger.error(f"SNMP parse error: {e}")
+            self.logger.debug(f"Failed response hex: {response.hex()}")
             import traceback
             traceback.print_exc()
             return None
