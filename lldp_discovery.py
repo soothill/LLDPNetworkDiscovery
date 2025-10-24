@@ -816,7 +816,7 @@ class PortSpeedDetector:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
             # Version identifier for debugging
-            LOG_VERSION = "v2.0-896ae56"
+            LOG_VERSION = "v2.1-aruba-fix"
 
             with open(log_filename, 'a') as f:
                 f.write("\n" + "=" * 100 + "\n")
@@ -1255,33 +1255,63 @@ class PortSpeedDetector:
 
         for line in output.split('\n'):
             # Parse Aruba output format
-            # Example: "9    Up     Yes    Enabled  Auto    1000FDx  None"
-            # Example: "25   Down   No     Disabled Auto    None     None"
+            # Example: "  1            100/1000T  | No        Yes     Up     100FDx     MDIX off  0"
+            # Example: "  11           100/1000T  | No        Yes     Up     1000FDx    MDI  off  0"
+            # Example: "  49-Trk3*     SFP+DAC    | No        Yes     Up     10GigFD    NA   off  0"
+            # Example: "  25           100/1000T  | No        Yes     Down   None       MDIX off  0"
+
+            # Skip header lines
+            if 'Port' in line and 'Type' in line:
+                continue
+
             parts = line.split()
             if len(parts) >= 3:
                 port_name = parts[0]
+
+                # Extract just the port number from names like "49-Trk3*" or "6-Trk2"
+                # Match the base port number at the start
+                port_num_match = re.match(r'^(\d+)', port_name)
+                if not port_num_match:
+                    continue
+
+                base_port = port_num_match.group(1)
+
                 for clean_port, original_ports in port_mapping.items():
-                    # Match port number (e.g., "9" matches port "9")
-                    if port_name == clean_port or clean_port in port_name or port_name in clean_port:
+                    # Match port number: "9" matches "9", "49" matches "49-Trk3*"
+                    if base_port == clean_port or clean_port == port_name:
                         detected_speed = None
-                        # Look for speed pattern like "1000FDx", "10GigFD", "1000FD", etc.
-                        speed_match = re.search(r'(\d+(?:Gig|G|M)(?:FDx|FD|HDx|HD)?)', line, re.IGNORECASE)
+
+                        # Look for speed pattern with duplex indicator to avoid matching port type
+                        # Must have FDx, FD, HDx, HD, or GigFD to be a valid speed
+                        # Examples: "100FDx", "1000FDx", "10GigFD", "100HDx"
+                        speed_match = re.search(r'(\d+)(?:Gig)?(FDx|FD|HDx|HD)\b', line, re.IGNORECASE)
+
                         if speed_match:
-                            speed_str = speed_match.group(1)
-                            # Normalize: "1000FDx" -> "1G", "10GigFD" -> "10G"
-                            num_match = re.search(r'(\d+)', speed_str)
-                            if num_match:
-                                speed_num = int(num_match.group(1))
-                                if 'G' in speed_str.upper() or 'GIG' in speed_str.upper():
-                                    detected_speed = f"{speed_num}G"
-                                elif speed_num >= 1000:
-                                    detected_speed = f"{speed_num // 1000}G"
-                                else:
-                                    detected_speed = f"{speed_num}M"
+                            speed_num = int(speed_match.group(1))
+                            speed_str = speed_match.group(0)  # Full match like "1000FDx" or "10GigFD"
+
+                            # Normalize speeds
+                            if 'GIG' in speed_str.upper():
+                                # "10GigFD" -> "10G"
+                                detected_speed = f"{speed_num}G"
+                            elif speed_num >= 1000:
+                                # "1000FDx" -> "1G"
+                                detected_speed = f"{speed_num // 1000}G"
+                            else:
+                                # "100FDx" -> "100M"
+                                detected_speed = f"{speed_num}M"
+                        elif 'None' in line and ('Up' in line or 'Down' in line):
+                            # Speed shown as "None" - link status only
+                            if 'Down' in line:
+                                detected_speed = "Down"
+                            else:
+                                detected_speed = "Link Up"
                         elif 'Up' in line:
                             detected_speed = "Link Up"
-                        else:
+                        elif 'Down' in line:
                             detected_speed = "Down"
+                        else:
+                            detected_speed = "Unknown"
 
                         # Apply to all original ports that map to this clean name
                         for original_port in original_ports:
