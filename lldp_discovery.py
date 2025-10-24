@@ -1974,50 +1974,61 @@ class SNMPLLDPCollector:
 
     def _build_snmp_get(self, oid: str, community: str = 'public') -> bytes:
         """Build SNMPv2c GET request packet"""
+        from pyasn1.type import tag
+
         # Convert OID string to tuple of integers
         oid_tuple = tuple(int(x) for x in oid.split('.'))
 
-        # Build SNMP packet structure
-        pdu = univ.Sequence()
+        # Variable bindings
+        varbind = univ.Sequence()
+        varbind.setComponentByPosition(0, univ.ObjectIdentifier(oid_tuple))
+        varbind.setComponentByPosition(1, univ.Null())
+
+        varbinds = univ.Sequence()
+        varbinds.setComponentByPosition(0, varbind)
+
+        # Build PDU with GetRequest context tag (0xA0)
+        pdu = univ.Sequence().subtype(
+            implicitTag=tag.Tag(tag.tagClassContext, tag.tagFormatConstructed, 0)
+        )
         pdu.setComponentByPosition(0, univ.Integer(self.request_id))
         pdu.setComponentByPosition(1, univ.Integer(0))  # error-status
         pdu.setComponentByPosition(2, univ.Integer(0))  # error-index
-
-        # Variable bindings
-        varbinds = univ.Sequence()
-        varbind = univ.Sequence()
-        varbind.setComponentByPosition(0, univ.ObjectIdentifier(oid_tuple))
-        varbind.setComponentByPosition(1, univ.Null())
-        varbinds.setComponentByPosition(0, varbind)
         pdu.setComponentByPosition(3, varbinds)
 
-        # Wrap in GetRequest PDU (tag 0xA0)
-        get_request = univ.Sequence()
-        get_request.setComponentByPosition(0, univ.Integer(1))  # version (SNMPv2c = 1)
-        get_request.setComponentByPosition(1, univ.OctetString(community))
-        get_request.setComponentByPosition(2, pdu)
-        get_request.getComponentByPosition(2).tagSet = univ.Sequence.tagSet.baseTag
+        # SNMP message
+        message = univ.Sequence()
+        message.setComponentByPosition(0, univ.Integer(1))  # version (SNMPv2c = 1)
+        message.setComponentByPosition(1, univ.OctetString(community))
+        message.setComponentByPosition(2, pdu)
 
         self.request_id += 1
-        return encoder.encode(get_request)
+        return encoder.encode(message)
 
     def _build_snmp_getnext(self, oid: str, community: str = 'public') -> bytes:
         """Build SNMPv2c GETNEXT request packet"""
+        from pyasn1.type import tag
+
         oid_tuple = tuple(int(x) for x in oid.split('.'))
 
-        pdu = univ.Sequence()
-        pdu.setComponentByPosition(0, univ.Integer(self.request_id))
-        pdu.setComponentByPosition(1, univ.Integer(0))
-        pdu.setComponentByPosition(2, univ.Integer(0))
-
-        varbinds = univ.Sequence()
+        # Variable bindings
         varbind = univ.Sequence()
         varbind.setComponentByPosition(0, univ.ObjectIdentifier(oid_tuple))
         varbind.setComponentByPosition(1, univ.Null())
+
+        varbinds = univ.Sequence()
         varbinds.setComponentByPosition(0, varbind)
+
+        # Build PDU with GetNextRequest context tag (0xA1)
+        pdu = univ.Sequence().subtype(
+            implicitTag=tag.Tag(tag.tagClassContext, tag.tagFormatConstructed, 1)
+        )
+        pdu.setComponentByPosition(0, univ.Integer(self.request_id))
+        pdu.setComponentByPosition(1, univ.Integer(0))  # error-status
+        pdu.setComponentByPosition(2, univ.Integer(0))  # error-index
         pdu.setComponentByPosition(3, varbinds)
 
-        # Wrap in GetNextRequest PDU
+        # SNMP message
         message = univ.Sequence()
         message.setComponentByPosition(0, univ.Integer(1))  # SNMPv2c
         message.setComponentByPosition(1, univ.OctetString(community))
