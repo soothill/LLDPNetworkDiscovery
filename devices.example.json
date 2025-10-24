@@ -71,6 +71,16 @@
       "username": "root",
       "ssh_key": "/root/.ssh/id_rsa",
       "port": 22
+    },
+    {
+      "hostname": "hp-aruba-1930-switch",
+      "ip_address": "192.168.1.60",
+      "device_type": "aruba",
+      "username": "admin",
+      "use_snmp": true,
+      "snmp_community": "public",
+      "snmp_version": "2c",
+      "snmp_port": 161
     }
   ]
 }

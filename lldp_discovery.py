@@ -19,6 +19,14 @@ import logging
 from math import cos, sin
 from datetime import datetime
 
+# For SNMP support
+try:
+    from pysnmp.hlapi import *
+    SNMP_AVAILABLE = True
+except ImportError:
+    SNMP_AVAILABLE = False
+    print("Warning: pysnmp not available. Install with: pip install pysnmp")
+
 # For graphical output
 try:
     import networkx as nx
@@ -47,7 +55,7 @@ class LLDPNeighbor:
 
 @dataclass
 class DeviceConfig:
-    """Device configuration for SSH connection"""
+    """Device configuration for SSH/SNMP connection"""
     hostname: str
     ip_address: str
     device_type: str  # linux, mikrotik, arista, aruba, ruijie, proxmox
@@ -56,6 +64,11 @@ class DeviceConfig:
     ssh_key: Optional[str] = None
     port: int = 22
     enable_password: Optional[str] = None  # For devices requiring enable mode (Aruba, Cisco, etc.)
+    # SNMP configuration (optional - used when SSH is not available)
+    snmp_community: Optional[str] = None  # SNMPv2c community string
+    snmp_version: str = '2c'  # SNMP version: '1', '2c', or '3'
+    snmp_port: int = 161
+    use_snmp: bool = False  # If True, use SNMP instead of SSH
 
 
 class SSHConnection:
@@ -1928,6 +1941,174 @@ class LLDPParser:
         return LLDPParser.parse_linux(output, hostname)
 
 
+class SNMPLLDPCollector:
+    """Collect LLDP information via SNMP when SSH is not available"""
+
+    # LLDP-MIB OIDs (IEEE 802.1AB)
+    LLDP_REM_TABLE = '1.0.8802.1.1.2.1.4.1.1'  # lldpRemTable
+    LLDP_REM_CHASSIS_ID_SUBTYPE = f'{LLDP_REM_TABLE}.4'  # lldpRemChassisIdSubtype
+    LLDP_REM_CHASSIS_ID = f'{LLDP_REM_TABLE}.5'  # lldpRemChassisId
+    LLDP_REM_PORT_ID_SUBTYPE = f'{LLDP_REM_TABLE}.6'  # lldpRemPortIdSubtype
+    LLDP_REM_PORT_ID = f'{LLDP_REM_TABLE}.7'  # lldpRemPortId
+    LLDP_REM_PORT_DESC = f'{LLDP_REM_TABLE}.8'  # lldpRemPortDesc
+    LLDP_REM_SYS_NAME = f'{LLDP_REM_TABLE}.9'  # lldpRemSysName
+    LLDP_REM_SYS_DESC = f'{LLDP_REM_TABLE}.10'  # lldpRemSysDesc
+
+    # Local interface name mapping
+    LLDP_LOC_PORT_DESC = '1.0.8802.1.1.2.1.3.7.1.4'  # lldpLocPortDesc
+    IF_NAME = '1.3.6.1.2.1.31.1.1.1.1'  # ifName
+    IF_DESCR = '1.3.6.1.2.1.2.2.1.2'  # ifDescr
+
+    def __init__(self, device: DeviceConfig):
+        self.device = device
+        self.logger = logging.getLogger(__name__)
+
+        if not SNMP_AVAILABLE:
+            raise ImportError("pysnmp library is required for SNMP operations. Install with: pip install pysnmp")
+
+    def get_lldp_neighbors(self) -> List[LLDPNeighbor]:
+        """Retrieve LLDP neighbors via SNMP"""
+        neighbors = []
+
+        if self.device.snmp_version == '2c':
+            community = CommunityData(self.device.snmp_community or 'public')
+        else:
+            self.logger.error(f"SNMP version {self.device.snmp_version} not yet supported")
+            return neighbors
+
+        target = UdpTransportTarget((self.device.ip_address, self.device.snmp_port), timeout=5, retries=2)
+
+        try:
+            # First, get local port descriptions to map port IDs to interface names
+            port_map = self._get_local_port_map(community, target)
+
+            # Get remote system names
+            remote_systems = self._snmp_walk(community, target, self.LLDP_REM_SYS_NAME)
+
+            # Get remote port IDs
+            remote_ports = self._snmp_walk(community, target, self.LLDP_REM_PORT_ID)
+
+            # Get remote port descriptions
+            remote_descs = self._snmp_walk(community, target, self.LLDP_REM_PORT_DESC)
+
+            # Parse the LLDP remote table entries
+            # OID format: .1.0.8802.1.1.2.1.4.1.1.X.timeMark.localPortNum.remoteIndex
+            for oid, remote_name in remote_systems.items():
+                # Extract indices from OID
+                oid_parts = oid.split('.')
+                if len(oid_parts) < 3:
+                    continue
+
+                # The last three parts are: timeMark, localPortNum, remoteIndex
+                time_mark = oid_parts[-3]
+                local_port_num = oid_parts[-2]
+                remote_index = oid_parts[-1]
+
+                # Reconstruct the index for looking up other fields
+                index_suffix = f"{time_mark}.{local_port_num}.{remote_index}"
+
+                # Get local port name
+                local_port = port_map.get(local_port_num, f"Port{local_port_num}")
+
+                # Get remote port ID (convert from hex if needed)
+                remote_port_oid = f"{self.LLDP_REM_PORT_ID}.{index_suffix}"
+                remote_port = remote_ports.get(remote_port_oid, '')
+
+                # Get remote description
+                remote_desc_oid = f"{self.LLDP_REM_PORT_DESC}.{index_suffix}"
+                remote_desc = remote_descs.get(remote_desc_oid, '')
+
+                # Clean up remote system name
+                remote_name = remote_name.strip()
+                remote_port = self._decode_port_id(remote_port)
+
+                self.logger.debug(f"SNMP LLDP: {self.device.hostname}:{local_port} -> {remote_name}:{remote_port}")
+
+                neighbors.append(LLDPNeighbor(
+                    local_device=self.device.hostname,
+                    local_port=local_port,
+                    remote_device=remote_name,
+                    remote_port=remote_port,
+                    remote_description=remote_desc
+                ))
+
+            self.logger.info(f"Found {len(neighbors)} LLDP neighbors via SNMP on {self.device.hostname}")
+
+        except Exception as e:
+            self.logger.error(f"SNMP LLDP retrieval failed for {self.device.hostname}: {e}")
+
+        return neighbors
+
+    def _get_local_port_map(self, community, target) -> Dict[str, str]:
+        """Map local port numbers to interface names"""
+        port_map = {}
+
+        # Try lldpLocPortDesc first (LLDP-specific port descriptions)
+        lldp_ports = self._snmp_walk(community, target, self.LLDP_LOC_PORT_DESC)
+        for oid, desc in lldp_ports.items():
+            port_num = oid.split('.')[-1]
+            port_map[port_num] = desc.strip()
+
+        # If that didn't work, try ifName
+        if not port_map:
+            if_names = self._snmp_walk(community, target, self.IF_NAME)
+            for oid, name in if_names.items():
+                port_num = oid.split('.')[-1]
+                port_map[port_num] = name.strip()
+
+        # Last resort: ifDescr
+        if not port_map:
+            if_descrs = self._snmp_walk(community, target, self.IF_DESCR)
+            for oid, desc in if_descrs.items():
+                port_num = oid.split('.')[-1]
+                port_map[port_num] = desc.strip()
+
+        return port_map
+
+    def _snmp_walk(self, community, target, oid: str) -> Dict[str, str]:
+        """Perform SNMP walk and return OID -> value dictionary"""
+        results = {}
+
+        try:
+            for (errorIndication, errorStatus, errorIndex, varBinds) in nextCmd(
+                SnmpEngine(),
+                community,
+                target,
+                ContextData(),
+                ObjectType(ObjectIdentity(oid)),
+                lexicographicMode=False
+            ):
+                if errorIndication:
+                    self.logger.debug(f"SNMP error during walk of {oid}: {errorIndication}")
+                    break
+                elif errorStatus:
+                    self.logger.debug(f"SNMP error status during walk of {oid}: {errorStatus.prettyPrint()}")
+                    break
+                else:
+                    for varBind in varBinds:
+                        oid_str = str(varBind[0])
+                        value = str(varBind[1])
+                        results[oid_str] = value
+
+        except Exception as e:
+            self.logger.debug(f"SNMP walk exception for {oid}: {e}")
+
+        return results
+
+    def _decode_port_id(self, port_id: str) -> str:
+        """Decode port ID from SNMP (may be hex string or regular string)"""
+        # If it looks like a hex string (e.g., "0x1a2b3c"), decode it
+        if port_id.startswith('0x'):
+            try:
+                hex_str = port_id[2:]
+                decoded = bytes.fromhex(hex_str).decode('utf-8', errors='ignore')
+                return decoded.strip()
+            except:
+                pass
+
+        return port_id.strip()
+
+
 class LLDPDiscovery:
     """Main LLDP discovery orchestrator"""
 
@@ -2090,9 +2271,28 @@ class LLDPDiscovery:
         return results
 
     def collect_lldp_neighbors(self, device: DeviceConfig) -> List[LLDPNeighbor]:
-        """Collect LLDP neighbors from a specific device"""
+        """Collect LLDP neighbors from a specific device (via SSH or SNMP)"""
         self.logger.info(f"Collecting LLDP data from {device.hostname}...")
 
+        # Check if SNMP is enabled for this device
+        if device.use_snmp:
+            self.logger.info(f"Using SNMP to collect LLDP data from {device.hostname}")
+            try:
+                snmp_collector = SNMPLLDPCollector(device)
+                neighbors = snmp_collector.get_lldp_neighbors()
+
+                if neighbors:
+                    self.logger.info(f"Successfully collected {len(neighbors)} neighbors via SNMP from {device.hostname}")
+                else:
+                    self.logger.warning(f"No LLDP neighbors found via SNMP on {device.hostname}")
+
+                return neighbors
+            except Exception as e:
+                self.logger.error(f"SNMP collection failed for {device.hostname}: {e}")
+                self.logger.info(f"Falling back to SSH for {device.hostname}...")
+                # Fall through to SSH collection below
+
+        # SSH-based collection
         ssh = SSHConnection(device)
         if not ssh.connect():
             return []

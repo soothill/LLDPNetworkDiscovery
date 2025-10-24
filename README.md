@@ -5,7 +5,9 @@ A comprehensive Python tool for discovering and visualizing network topology usi
 ## Features
 
 - **Multi-Vendor Support**: Works with Linux, MikroTik, Arista EOS, HP Aruba, Ruijie, and Proxmox devices
-- **SSH-Based Discovery**: Securely connects to devices via SSH with per-device credential configuration
+- **Dual Discovery Methods**:
+  - SSH-based discovery for devices with CLI access
+  - SNMP-based discovery for devices without SSH/CLI (e.g., HP Aruba 1930)
 - **Port Speed Detection**: Automatically detects and displays network port speeds (1G, 10G, etc.)
 - **Connectivity Testing**: Built-in testing mode to verify device accessibility before discovery
 - **Three Visualization Types**:
@@ -73,6 +75,7 @@ This creates `devices.json` with the following structure:
 
 ### Configuration Parameters
 
+#### SSH-Based Devices
 - **hostname**: Friendly name for the device (used in visualization)
 - **ip_address**: IP address or hostname for SSH connection
 - **device_type**: Device platform - `linux`, `mikrotik`, `arista`, `aruba`, `ruijie`, or `proxmox`
@@ -80,6 +83,31 @@ This creates `devices.json` with the following structure:
 - **password**: SSH password (optional if using SSH keys)
 - **ssh_key**: Path to SSH private key file (optional)
 - **port**: SSH port (default: 22)
+
+#### SNMP-Based Devices
+For devices without CLI access (like HP Aruba 1930 switches), use SNMP instead:
+- **hostname**: Friendly name for the device (used in visualization)
+- **ip_address**: IP address or hostname for SNMP connection
+- **device_type**: Device platform (e.g., `aruba`)
+- **username**: Can be set to any value (required field but not used for SNMP)
+- **use_snmp**: Set to `true` to enable SNMP mode
+- **snmp_community**: SNMP community string (default: "public")
+- **snmp_version**: SNMP version - currently only `"2c"` is supported (default: "2c")
+- **snmp_port**: SNMP port (default: 161)
+
+#### SNMP Configuration Example
+```json
+{
+  "hostname": "hp-aruba-1930-switch",
+  "ip_address": "192.168.1.60",
+  "device_type": "aruba",
+  "username": "admin",
+  "use_snmp": true,
+  "snmp_community": "public",
+  "snmp_version": "2c",
+  "snmp_port": 161
+}
+```
 
 ### Device-Specific Requirements
 
@@ -137,6 +165,22 @@ sudo chmod 0440 /etc/sudoers.d/lldp
 - LLDP daemon must be running
 - Commands used: `sudo lldpctl`, `sudo ethtool`
 - **IMPORTANT**: User must have sudo privileges (same as Linux above)
+
+#### Devices Without CLI (SNMP Mode)
+For devices like HP Aruba 1930 that lack SSH/CLI access:
+- **SNMP must be enabled** on the device
+- **LLDP must be enabled** on the device
+- Configure SNMP community string (read-only access is sufficient)
+- Requires `pysnmp` Python library (included in requirements.txt)
+- Uses standard LLDP-MIB (IEEE 802.1AB) OIDs
+- Currently supports SNMPv2c only
+
+**SNMP Device Configuration** (example for HP Aruba 1930):
+1. Access the web interface
+2. Enable SNMP under System > SNMP
+3. Set a community string (e.g., "public" for read-only)
+4. Ensure LLDP is enabled under Network > LLDP
+5. Add device to `devices.json` with `use_snmp: true`
 
 ## Usage
 
