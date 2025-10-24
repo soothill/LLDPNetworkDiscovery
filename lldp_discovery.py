@@ -2226,8 +2226,9 @@ class LLDPDiscovery:
         # Test SNMP connection if enabled
         if device.use_snmp:
             if not SNMP_AVAILABLE:
-                self.logger.error(f"✗ {device.hostname} - SNMP requested but pysnmp not installed")
-                self.logger.error("Install pysnmp with: pip install pysnmp")
+                self.logger.error(f"✗ {device.hostname} - SNMP requested but pysnmp not available or incompatible")
+                self.logger.error("Try: pip uninstall pysnmp pysnmp-lextudio")
+                self.logger.error("Then: pip install pysnmp==4.4.12")
                 return False
 
             self.logger.info(f"Testing SNMP connectivity to {device.hostname}...")
