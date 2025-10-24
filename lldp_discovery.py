@@ -21,11 +21,19 @@ from datetime import datetime
 
 # For SNMP support
 try:
-    from pysnmp.hlapi import *
+    from pysnmp.hlapi import (
+        CommunityData, UdpTransportTarget, ContextData,
+        ObjectType, ObjectIdentity, SnmpEngine,
+        getCmd, nextCmd
+    )
     SNMP_AVAILABLE = True
-except ImportError:
+except ImportError as e:
     SNMP_AVAILABLE = False
-    print("Warning: pysnmp not available. Install with: pip install pysnmp")
+    print(f"Warning: pysnmp not available. Install with: pip install pysnmp")
+    print(f"Import error: {e}")
+except Exception as e:
+    SNMP_AVAILABLE = False
+    print(f"Warning: pysnmp import failed: {e}")
 
 # For graphical output
 try:
