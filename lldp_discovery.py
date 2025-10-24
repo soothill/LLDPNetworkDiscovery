@@ -864,56 +864,76 @@ class PortSpeedDetector:
         """Get port speeds for MikroTik interfaces"""
         speeds = {}
 
+        # Clean port names - remove suffixes like ",bridge", ",trunk", ",OfficeAruba"
+        # Map cleaned names back to original requested names
+        port_mapping = {}
+        for port in ports:
+            # Extract just the interface name before any comma
+            clean_port = port.split(',')[0]
+            port_mapping[clean_port] = port
+
         # Use ethernet print command for speed info
         stdout, stderr, exit_code = ssh.execute_command('/interface ethernet print detail without-paging')
 
         if exit_code == 0:
             current_interface = None
-            current_rate = None
+            current_speed = None
 
             for line in stdout.split('\n'):
                 line = line.strip()
 
-                # Match interface name (e.g., "name=ether1" or just line starting with number)
+                # Match interface name (e.g., "name=ether1" or "name=sfp-sfpplus1")
                 name_match = re.search(r'name[=:]\s*"?([^"\s,]+)"?', line)
                 if name_match:
                     # Save previous interface if we had one
-                    if current_interface and current_rate and current_interface in ports:
-                        speeds[current_interface] = current_rate
+                    if current_interface and current_speed:
+                        # Check if this interface is in our cleaned port list
+                        if current_interface in port_mapping:
+                            original_port = port_mapping[current_interface]
+                            speeds[original_port] = current_speed
 
                     current_interface = name_match.group(1)
-                    current_rate = None
+                    current_speed = None
 
-                # Match rate/speed (can be "rate:", "rate=", or "speed:")
+                # Match speed= field (actual negotiated speed)
+                # Examples: "speed=10G-baseCR", "speed=40G-baseCR4", "speed=2.5G-baseT"
                 if current_interface:
-                    # Try different patterns for speed
-                    # MikroTik formats: "rate=10Gbps", "rate=1Gbps", "rate=100Mbps"
-                    speed_patterns = [
-                        r'rate[=:]\s*(\d+(?:\.\d+)?[MG]bps)',      # "rate=10Gbps"
-                        r'speed[=:]\s*(\d+(?:\.\d+)?[MG]bps)',     # "speed=1Gbps"
-                        r'actual-rate[=:]\s*(\d+(?:\.\d+)?[MG])',  # "actual-rate=1G"
-                        r'rate[=:]\s*(\d+[MG])',                   # "rate=10G"
-                        r'speed[=:]\s*(\d+[MG])',                  # "speed=1G"
-                    ]
+                    speed_match = re.search(r'speed=(\d+(?:\.\d+)?[GM])-base', line, re.IGNORECASE)
+                    if speed_match:
+                        speed_value = speed_match.group(1).upper()
+                        # Normalize: "10G" stays "10G", "2.5G" stays "2.5G"
+                        current_speed = speed_value
+                        continue
 
-                    for pattern in speed_patterns:
-                        rate_match = re.search(pattern, line, re.IGNORECASE)
-                        if rate_match:
-                            rate_str = rate_match.group(1)
-                            # Normalize format: "10Gbps" -> "10G", "1000Mbps" -> "1G"
-                            rate_str = rate_str.replace('bps', '').upper()
-                            # Convert Mbps >= 1000 to Gbps
-                            num_match = re.search(r'(\d+)M', rate_str)
-                            if num_match and int(num_match.group(1)) >= 1000:
-                                rate_str = f"{int(num_match.group(1)) // 1000}G"
-                            current_rate = rate_str
-                            break
+                    # If no speed= field, check advertise= for max capability (auto-negotiation)
+                    # Example: "advertise=...1G-baseT-full,10G-baseT..."
+                    if not current_speed and 'advertise=' in line:
+                        # Extract highest advertised speed
+                        advertise_speeds = []
+                        # Look for patterns like "10G-baseT", "1G-baseT-full", "2.5G-baseT"
+                        for adv_match in re.finditer(r'(\d+(?:\.\d+)?)[GM]-base', line, re.IGNORECASE):
+                            speed_str = adv_match.group(0)
+                            # Extract just the numeric part with G/M
+                            num_match = re.search(r'(\d+(?:\.\d+)?[GM])', speed_str, re.IGNORECASE)
+                            if num_match:
+                                advertise_speeds.append(num_match.group(1).upper())
+
+                        if advertise_speeds:
+                            # Find highest speed (prefer G over M, higher numbers)
+                            def speed_value(s):
+                                num = float(re.search(r'([\d.]+)', s).group(1))
+                                return num * 1000 if 'G' in s else num
+
+                            highest = max(advertise_speeds, key=speed_value)
+                            current_speed = f"{highest} (adv)"
 
             # Save last interface
-            if current_interface and current_rate and current_interface in ports:
-                speeds[current_interface] = current_rate
+            if current_interface and current_speed:
+                if current_interface in port_mapping:
+                    original_port = port_mapping[current_interface]
+                    speeds[original_port] = current_speed
 
-        # Fill in unknowns
+        # Fill in unknowns for originally requested ports
         for port in ports:
             if port not in speeds:
                 speeds[port] = "Unknown"
