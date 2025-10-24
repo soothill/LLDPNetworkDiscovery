@@ -1831,24 +1831,61 @@ class LLDPParser:
             if len(fields) < 2:
                 continue
 
-            # Extract remote_device (SysName - last field) and remote_port (PortId)
-            remote_device = fields[-1]  # SysName is always last
+            # Extract remote_port (PortId) - typically second field after ChassisId
+            port_id = fields[1] if len(fields) >= 2 else fields[0]
             remote_port = ""
+
+            # Skip VLAN interface names in PortId field
+            # VLANs appear as: vlan1, vlan200, bridge.201, trunk/..., etc.
+            port_id_lower = port_id.lower()
+            if any(vlan_pattern in port_id_lower for vlan_pattern in
+                   ['vlan', 'bridge', 'trunk/', 'bond', 'lag']):
+                continue
+            remote_port = port_id
+
+            # Extract remote_device (SysName) - everything after PortId
+            # SysName can contain spaces (e.g., "MikroTik RB5009")
+            # Fields: [ChassisId, PortId, ...PortDescr..., ...SysName...]
+            # We need to find where PortId ends and take everything after that
+            # Strategy: Skip first 2 fields (ChassisId, PortId), the rest is PortDescr + SysName
+            # Since PortDescr might not exist, take the last contiguous words as SysName
+
+            if len(fields) >= 3:
+                # Join fields starting from index 2 onwards (after ChassisId and PortId)
+                remaining = ' '.join(fields[2:])
+
+                # Try to separate PortDescr from SysName
+                # PortDescr is usually a short technical string, SysName is typically a hostname
+                # For simplicity, take the last recognizable word(s) as the hostname
+                # If there's only one word left, that's the SysName
+                # If multiple words, the last word or last few words form the SysName
+                remaining_parts = remaining.split()
+
+                if len(remaining_parts) == 1:
+                    # Only one word - must be SysName
+                    remote_device = remaining_parts[0]
+                elif len(remaining_parts) >= 2:
+                    # Multiple words - check if last 2 words form a device name pattern
+                    # Common patterns: "MikroTik RB5009", "MikroTik CRS326", "MikroTik Hex", "MikroTik 4011"
+                    last_two = ' '.join(remaining_parts[-2:])
+                    last_one = remaining_parts[-1]
+
+                    # If second-to-last word is a vendor name, take last 2 words
+                    vendor_keywords = ['mikrotik', 'cisco', 'arista', 'juniper', 'hp', 'aruba', 'dell']
+                    if any(vendor in remaining_parts[-2].lower() for vendor in vendor_keywords):
+                        remote_device = last_two
+                    else:
+                        # Otherwise just take the last word
+                        remote_device = last_one
+                else:
+                    remote_device = remaining
+            else:
+                # Not enough fields, skip this entry
+                continue
 
             # Skip if no valid remote device name
             if not remote_device or remote_device in ['-', '']:
                 continue
-
-            # Skip VLAN interface names in PortId field
-            # VLANs appear as: vlan1, vlan200, bridge.201, trunk/..., etc.
-            if len(fields) >= 2:
-                port_id = fields[1] if len(fields) >= 2 else fields[0]
-                # Skip if PortId is a VLAN interface
-                port_id_lower = port_id.lower()
-                if any(vlan_pattern in port_id_lower for vlan_pattern in
-                       ['vlan', 'bridge', 'trunk/', 'bond', 'lag']):
-                    continue
-                remote_port = port_id
 
             # Create unique key for this physical connection
             connection_key = (local_port, remote_device)
