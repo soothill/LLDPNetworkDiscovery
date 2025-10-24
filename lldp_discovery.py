@@ -3190,6 +3190,9 @@ class LLDPDiscovery:
 
         self.logger.info(f"Generating D3 visualization with {len(device_set)} devices and {len(connections)} connections")
 
+        # Prepare node data for JSON serialization
+        nodes_data = [{'id': d, 'label': d} for d in sorted(device_set)]
+
         # Generate clean HTML with embedded D3.js visualization
         html_content = f'''<!DOCTYPE html>
 <html lang="en">
@@ -3463,7 +3466,7 @@ class LLDPDiscovery:
     <script>
         // Network data
         const networkData = {{
-            nodes: {json.dumps([{{'id': d, 'label': d}} for d in sorted(device_set)])},
+            nodes: {json.dumps(nodes_data)},
             links: {json.dumps(connections)}
         }};
 
