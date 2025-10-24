@@ -131,38 +131,41 @@ class SSHConnection:
                     paramiko_logger.setLevel(logging.CRITICAL)
 
                     try:
-                        # CRITICAL: Re-enable ssh-rsa in _key_info (disabled in paramiko 2.9+)
-                        # This is required for most HP Aruba switches
-                        rsa_enabled = False
-                        if 'ssh-rsa' not in transport_module.Transport._key_info:
-                            try:
-                                from paramiko.rsakey import RSAKey
-                                transport_module.Transport._key_info['ssh-rsa'] = RSAKey
-                                self.logger.info("✓ Re-enabled ssh-rsa host key algorithm (required for HP Aruba)")
-                                rsa_enabled = True
-                            except ImportError:
-                                self.logger.error("✗ Could not import RSAKey - ssh-rsa will not be available!")
-                        else:
-                            self.logger.debug("ssh-rsa already available in _key_info")
-                            rsa_enabled = True
-
-                        # Check if ssh-dss is available (less common but still needed for very old devices)
+                        # CRITICAL: Re-enable ssh-dss in _key_info (disabled in paramiko 2.9+)
+                        # HP Aruba 2930F switches (Mocana SSH 5.8) REQUIRE ssh-dss!
                         dss_enabled = False
                         if 'ssh-dss' not in transport_module.Transport._key_info:
                             try:
                                 from paramiko.dsskey import DSSKey
                                 transport_module.Transport._key_info['ssh-dss'] = DSSKey
-                                self.logger.debug("Re-enabled ssh-dss host key algorithm")
+                                self.logger.info("✓ Re-enabled ssh-dss host key algorithm (REQUIRED for HP Aruba 2930F)")
                                 dss_enabled = True
                             except ImportError:
-                                self.logger.debug("ssh-dss not available in this paramiko version")
+                                self.logger.error("✗ Could not import DSSKey - ssh-dss will not be available!")
+                                self.logger.error("   HP Aruba 2930F switches REQUIRE ssh-dss!")
+                                self.logger.error("   Try: pip install paramiko==2.8.1")
                         else:
+                            self.logger.debug("ssh-dss already available in _key_info")
                             dss_enabled = True
 
+                        # Also enable ssh-rsa for other HP Aruba models
+                        rsa_enabled = False
+                        if 'ssh-rsa' not in transport_module.Transport._key_info:
+                            try:
+                                from paramiko.rsakey import RSAKey
+                                transport_module.Transport._key_info['ssh-rsa'] = RSAKey
+                                self.logger.debug("Re-enabled ssh-rsa host key algorithm")
+                                rsa_enabled = True
+                            except ImportError:
+                                self.logger.debug("Could not import RSAKey")
+                        else:
+                            rsa_enabled = True
+
                         # Build list of available host key algorithms
-                        # IMPORTANT: ssh-rsa must be near the top for HP Aruba compatibility
+                        # CRITICAL: ssh-dss MUST be FIRST for HP Aruba 2930F (Mocana SSH 5.8)!
                         available_keys = [
-                            'ssh-rsa',  # FIRST - Legacy RSA needed for HP Aruba
+                            'ssh-dss',  # FIRST - Required for HP Aruba 2930F
+                            'ssh-rsa',  # Second - For other HP Aruba models
                             'rsa-sha2-512',
                             'rsa-sha2-256',
                             'ssh-ed25519',
@@ -170,10 +173,6 @@ class SSHConnection:
                             'ecdsa-sha2-nistp384',
                             'ecdsa-sha2-nistp521',
                         ]
-
-                        # Add ssh-dss if available
-                        if dss_enabled:
-                            available_keys.append('ssh-dss')
 
                         # Filter to only include keys that are actually available
                         final_keys = []
@@ -188,34 +187,35 @@ class SSHConnection:
                             self.logger.error("No host key algorithms available!")
                             raise
 
-                        if 'ssh-rsa' not in final_keys:
-                            self.logger.error("WARNING: ssh-rsa not in final key list - connection may fail!")
+                        if 'ssh-dss' not in final_keys:
+                            self.logger.error("WARNING: ssh-dss not in final key list - HP Aruba 2930F connection may fail!")
 
                         transport_module.Transport._preferred_keys = tuple(final_keys)
-                        self.logger.info(f"Enabled {len(final_keys)} host key algorithms (ssh-rsa={'YES' if 'ssh-rsa' in final_keys else 'NO'})")
+                        self.logger.info(f"Enabled {len(final_keys)} host key algorithms (ssh-dss={'YES' if 'ssh-dss' in final_keys else 'NO'}, ssh-rsa={'YES' if 'ssh-rsa' in final_keys else 'NO'})")
 
-                        # Build list of available KEX algorithms (modern first, then legacy)
-                        available_kex = [
+                        # Build list of available KEX algorithms
+                        # CRITICAL: diffie-hellman-group14-sha1 MUST be available for HP Aruba 2930F
+                        available_kex = []
+
+                        # Try to add group14-sha1 FIRST (REQUIRED for HP Aruba 2930F - Mocana SSH 5.8)
+                        try:
+                            from paramiko.kex_group14 import KexGroup14SHA1
+                            available_kex.append('diffie-hellman-group14-sha1')
+                            self.logger.info("✓ Added diffie-hellman-group14-sha1 KEX (REQUIRED for HP Aruba 2930F)")
+                        except ImportError:
+                            # It might still be available even if we can't import the class
+                            available_kex.append('diffie-hellman-group14-sha1')
+                            self.logger.info("✓ Added diffie-hellman-group14-sha1 KEX (fallback)")
+
+                        # Then add modern KEX algorithms
+                        available_kex.extend([
                             'ecdh-sha2-nistp256',
                             'ecdh-sha2-nistp384',
                             'ecdh-sha2-nistp521',
                             'diffie-hellman-group16-sha512',
                             'diffie-hellman-group-exchange-sha256',
                             'diffie-hellman-group14-sha256',
-                        ]
-
-                        # Try to enable legacy KEX algorithms (often removed in newer paramiko)
-                        # These are critical for older HP Aruba switches
-
-                        # Try to add group14-sha1 (needed for many HP Aruba switches)
-                        try:
-                            from paramiko.kex_group14 import KexGroup14SHA1
-                            available_kex.append('diffie-hellman-group14-sha1')
-                            self.logger.debug("Added diffie-hellman-group14-sha1 KEX algorithm")
-                        except ImportError:
-                            # It might still be available even if we can't import the class
-                            available_kex.append('diffie-hellman-group14-sha1')
-                            self.logger.debug("Added diffie-hellman-group14-sha1 (fallback)")
+                        ])
 
                         # Add group-exchange-sha1
                         available_kex.append('diffie-hellman-group-exchange-sha1')
