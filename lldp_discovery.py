@@ -835,6 +835,9 @@ class SSHConnection:
 class PortSpeedDetector:
     """Detects port speeds for different device types"""
 
+    # Class variable to track if log has been initialized for this run
+    _log_initialized = False
+
     @staticmethod
     def _clean_port_names(ports: List[str]) -> Dict[str, List[str]]:
         """
@@ -863,7 +866,12 @@ class PortSpeedDetector:
             # Version identifier for debugging
             LOG_VERSION = "v2.2-arista-fix"
 
-            with open(log_filename, 'a') as f:
+            # On first write of the run, clear the log file
+            write_mode = 'w' if not PortSpeedDetector._log_initialized else 'a'
+            if not PortSpeedDetector._log_initialized:
+                PortSpeedDetector._log_initialized = True
+
+            with open(log_filename, write_mode) as f:
                 f.write("\n" + "=" * 100 + "\n")
                 f.write(f"LOG VERSION: {LOG_VERSION}\n")
                 f.write(f"TIMESTAMP: {timestamp}\n")
