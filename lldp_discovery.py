@@ -1552,14 +1552,18 @@ class LLDPParser:
             if line.startswith('Interface:'):
                 # Save previous neighbor if complete
                 if current_interface and remote_system:
-                    neighbors.append(LLDPNeighbor(
-                        local_device=hostname,
-                        local_port=current_interface,
-                        remote_device=remote_system,
-                        remote_port=remote_port or '',
-                        remote_description=remote_desc
-                    ))
-                    logger.debug(f"Linux: Found neighbor {remote_system} on {current_interface}")
+                    # Skip self-connections (device discovering itself via bridge/bond)
+                    if remote_system == hostname:
+                        logger.debug(f"Linux: Skipping self-connection {hostname} -> {hostname} on {current_interface}")
+                    else:
+                        neighbors.append(LLDPNeighbor(
+                            local_device=hostname,
+                            local_port=current_interface,
+                            remote_device=remote_system,
+                            remote_port=remote_port or '',
+                            remote_description=remote_desc
+                        ))
+                        logger.debug(f"Linux: Found neighbor {remote_system} on {current_interface}")
 
                 # Extract interface name - handle "Interface: eth0, via: LLDP, ..."
                 iface_part = line.split(':')[1].strip()
