@@ -2135,11 +2135,144 @@ class SNMPLLDPCollector:
             return None
 
         except Exception as e:
-            self.logger.error(f"SNMP parse error: {e}")
-            self.logger.debug(f"Failed response hex: {response.hex()}")
-            import traceback
-            traceback.print_exc()
-            return None
+            self.logger.warning(f"pyasn1 decode failed: {e}, trying manual parse")
+
+            # Fallback: Manual SNMP response parsing
+            # SNMPv2c message: SEQUENCE { version INTEGER, community OCTET STRING, pdu PDU }
+            # PDU: GetResponse [2] { request-id, error-status, error-index, varbinds }
+            try:
+                pos = 0
+                # Outer SEQUENCE
+                if response[pos] != 0x30:
+                    return None
+                pos += 1
+                seq_len = response[pos]
+                pos += 1
+
+                # Version INTEGER
+                if response[pos] != 0x02:
+                    return None
+                pos += 1
+                ver_len = response[pos]
+                pos += 1
+                version = int.from_bytes(response[pos:pos+ver_len], 'big')
+                pos += ver_len
+
+                # Community OCTET STRING
+                if response[pos] != 0x04:
+                    return None
+                pos += 1
+                comm_len = response[pos]
+                pos += 1
+                community = response[pos:pos+comm_len].decode('utf-8', errors='ignore')
+                pos += comm_len
+
+                # PDU (GetResponse = 0xA2)
+                if response[pos] != 0xA2:
+                    self.logger.warning(f"Expected GetResponse (0xA2), got 0x{response[pos]:02x}")
+                    return None
+                pos += 1
+                pdu_len = response[pos]
+                pos += 1
+
+                # Request ID
+                if response[pos] != 0x02:
+                    return None
+                pos += 1
+                req_id_len = response[pos]
+                pos += 1
+                request_id = int.from_bytes(response[pos:pos+req_id_len], 'big')
+                pos += req_id_len
+
+                # Error status
+                if response[pos] != 0x02:
+                    return None
+                pos += 1
+                err_len = response[pos]
+                pos += 1
+                error_status = int.from_bytes(response[pos:pos+err_len], 'big')
+                pos += err_len
+
+                # Error index
+                if response[pos] != 0x02:
+                    return None
+                pos += 1
+                err_idx_len = response[pos]
+                pos += 1
+                error_index = int.from_bytes(response[pos:pos+err_idx_len], 'big')
+                pos += err_idx_len
+
+                self.logger.debug(f"Manual parse: version={version}, community={community}, reqid={request_id}, error={error_status}")
+
+                if error_status != 0:
+                    error_names = {1: 'tooBig', 2: 'noSuchName', 3: 'badValue', 4: 'readOnly', 5: 'genErr'}
+                    self.logger.warning(f"SNMP error: {error_names.get(error_status, f'error{error_status}')}")
+                    return None
+
+                # VarBindList SEQUENCE
+                if response[pos] != 0x30:
+                    return None
+                pos += 1
+                varbind_list_len = response[pos]
+                pos += 1
+
+                # First VarBind SEQUENCE
+                if response[pos] != 0x30:
+                    return None
+                pos += 1
+                varbind_len = response[pos]
+                pos += 1
+
+                # OID
+                if response[pos] != 0x06:
+                    return None
+                pos += 1
+                oid_len = response[pos]
+                pos += 1
+                oid_bytes = response[pos:pos+oid_len]
+                pos += oid_len
+
+                # Decode OID
+                oid_parts = []
+                oid_parts.append(str(oid_bytes[0] // 40))
+                oid_parts.append(str(oid_bytes[0] % 40))
+                i = 1
+                while i < len(oid_bytes):
+                    val = 0
+                    while i < len(oid_bytes):
+                        byte = oid_bytes[i]
+                        val = (val << 7) | (byte & 0x7f)
+                        i += 1
+                        if not (byte & 0x80):
+                            break
+                    oid_parts.append(str(val))
+                oid = '.'.join(oid_parts)
+
+                # Value (could be any type, get tag)
+                value_tag = response[pos]
+                pos += 1
+                value_len = response[pos]
+                pos += 1
+                value_bytes = response[pos:pos+value_len]
+
+                # Decode value based on tag
+                if value_tag == 0x04:  # OCTET STRING
+                    value_str = value_bytes.decode('utf-8', errors='replace')
+                elif value_tag == 0x02:  # INTEGER
+                    value_str = str(int.from_bytes(value_bytes, 'big')) if value_bytes else "0"
+                elif value_tag == 0x05:  # NULL
+                    value_str = ""
+                else:
+                    value_str = value_bytes.hex()
+
+                self.logger.info(f"Manual parse successful: OID={oid}, Value='{value_str}'")
+                return {'oid': oid, 'value': value_str}
+
+            except Exception as manual_err:
+                self.logger.error(f"Manual parse also failed: {manual_err}")
+                import traceback
+                traceback.print_exc()
+                return None
 
     def snmp_get(self, oid: str) -> Optional[str]:
         """Perform SNMP GET operation"""
