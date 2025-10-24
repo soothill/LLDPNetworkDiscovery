@@ -2207,9 +2207,42 @@ class LLDPDiscovery:
             return False
 
     def test_device(self, device: DeviceConfig) -> bool:
-        """Test SSH connectivity to a device"""
+        """Test connectivity to a device (SSH or SNMP)"""
         self.logger.info(f"Testing connection to {device.hostname} ({device.ip_address})...")
 
+        # Test SNMP connection if enabled
+        if device.use_snmp:
+            self.logger.info(f"Testing SNMP connectivity to {device.hostname}...")
+            try:
+                snmp_collector = SNMPLLDPCollector(device)
+
+                # Try a simple SNMP query to verify connectivity
+                from pysnmp.hlapi import *
+                community = CommunityData(device.snmp_community or 'public')
+                target = UdpTransportTarget((device.ip_address, device.snmp_port), timeout=5, retries=1)
+
+                # Query sysName (1.3.6.1.2.1.1.5.0) as a simple connectivity test
+                errorIndication, errorStatus, errorIndex, varBinds = next(
+                    getCmd(SnmpEngine(), community, target, ContextData(),
+                           ObjectType(ObjectIdentity('1.3.6.1.2.1.1.5.0')))
+                )
+
+                if errorIndication:
+                    self.logger.error(f"✗ {device.hostname} - SNMP connection failed: {errorIndication}")
+                    return False
+                elif errorStatus:
+                    self.logger.error(f"✗ {device.hostname} - SNMP error: {errorStatus.prettyPrint()}")
+                    return False
+                else:
+                    sys_name = str(varBinds[0][1]) if varBinds else "Unknown"
+                    self.logger.info(f"✓ {device.hostname} - SNMP connection successful (sysName: {sys_name})")
+                    return True
+
+            except Exception as e:
+                self.logger.error(f"✗ {device.hostname} - SNMP test failed: {e}")
+                return False
+
+        # Test SSH connection for non-SNMP devices
         ssh = SSHConnection(device)
         if not ssh.connect():
             return False
