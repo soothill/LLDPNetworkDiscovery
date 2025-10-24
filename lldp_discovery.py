@@ -19,49 +19,62 @@ import logging
 from math import cos, sin
 from datetime import datetime
 
-# For SNMP support - try modern pysnmp (v6+), then fall back to v4
+# For SNMP support - comprehensive import handling for all pysnmp versions
 SNMP_AVAILABLE = False
 CommunityData = UdpTransportTarget = ContextData = None
 ObjectType = ObjectIdentity = SnmpEngine = None
 getCmd = nextCmd = None
 
-# Try modern pysnmp v6+ with sync API
+# Debug: Check if pysnmp is installed at all
 try:
-    from pysnmp.hlapi.v3arch.sync import (
-        CommunityData, UdpTransportTarget, ContextData,
-        ObjectType, ObjectIdentity, SnmpEngine,
-        getCmd, nextCmd
-    )
-    SNMP_AVAILABLE = True
     import pysnmp
-    version = getattr(pysnmp, '__version__', 'unknown')
-    print(f"Using pysnmp v6+ sync API (version {version})")
-except (ImportError, AttributeError, ModuleNotFoundError):
-    # Try legacy pysnmp v4/v5 with classic API
+    pysnmp_version = getattr(pysnmp, '__version__', 'unknown')
+    pysnmp_file = getattr(pysnmp, '__file__', 'unknown')
+    print(f"DEBUG: Found pysnmp version {pysnmp_version} at {pysnmp_file}")
+except ImportError:
+    print("DEBUG: pysnmp package not found")
+    pysnmp = None
+
+if pysnmp:
+    # Try modern pysnmp v6+ with sync API
     try:
-        from pysnmp.hlapi import (
+        from pysnmp.hlapi.v3arch.sync import (
             CommunityData, UdpTransportTarget, ContextData,
             ObjectType, ObjectIdentity, SnmpEngine,
             getCmd, nextCmd
         )
         SNMP_AVAILABLE = True
-        import pysnmp
-        version = getattr(pysnmp, '__version__', 'unknown')
-        print(f"Using pysnmp v4/v5 classic API (version {version})")
+        print(f"SUCCESS: Using pysnmp v6+ sync API (version {pysnmp_version})")
     except (ImportError, AttributeError, ModuleNotFoundError) as e:
-        SNMP_AVAILABLE = False
-        print(f"Warning: pysnmp not available or incompatible version.")
-        print(f"Try: pip uninstall pysnmp pysnmp-lextudio pyasn1 -y")
-        print(f"Then: pip install pysnmp>=6.0.0")
-        print(f"Or: pip install -r requirements.txt")
-        print(f"")
-        print(f"Detailed error: {e}")
+        print(f"DEBUG: v6+ sync API import failed: {e}")
+        # Try legacy pysnmp v4/v5 with classic API
+        try:
+            from pysnmp.hlapi import (
+                CommunityData, UdpTransportTarget, ContextData,
+                ObjectType, ObjectIdentity, SnmpEngine,
+                getCmd, nextCmd
+            )
+            SNMP_AVAILABLE = True
+            print(f"SUCCESS: Using pysnmp v4/v5 classic API (version {pysnmp_version})")
+        except (ImportError, AttributeError, ModuleNotFoundError) as e:
+            print(f"DEBUG: v4/v5 classic API import failed: {e}")
+            SNMP_AVAILABLE = False
+        except Exception as e:
+            print(f"DEBUG: v4/v5 import unexpected error: {e}")
+            SNMP_AVAILABLE = False
     except Exception as e:
+        print(f"DEBUG: v6+ import unexpected error: {e}")
         SNMP_AVAILABLE = False
-        print(f"Warning: pysnmp v4/v5 import failed: {e}")
-except Exception as e:
-    SNMP_AVAILABLE = False
-    print(f"Warning: pysnmp v6+ import failed: {e}")
+
+if not SNMP_AVAILABLE:
+    print(f"")
+    print(f"ERROR: pysnmp library could not be imported correctly.")
+    print(f"")
+    print(f"Solution: Completely remove and reinstall pysnmp")
+    print(f"  pip uninstall pysnmp pysnmp-lextudio pyasn1 pysmi -y")
+    print(f"  pip cache purge")
+    print(f"  pip install pysnmp==6.2.6")
+    print(f"")
 
 # For graphical output
 try:
