@@ -1676,7 +1676,8 @@ class LLDPParser:
         for line in lines:
             line = line.strip()
 
-            if line.startswith('Interface'):
+            # Parse "Interface EthernetX detected N LLDP neighbors:"
+            if line.startswith('Interface') and 'detected' in line:
                 if current_neighbor and 'local_port' in current_neighbor:
                     # Only add neighbor if we have both device and port info
                     if current_neighbor.get('remote_device') and current_neighbor.get('remote_port'):
@@ -1687,36 +1688,43 @@ class LLDPParser:
                             remote_port=current_neighbor.get('remote_port', ''),
                             remote_description=current_neighbor.get('remote_desc')
                         ))
+                        logger.debug(f"Arista: Added neighbor {current_neighbor.get('remote_device')} on {current_neighbor.get('local_port')}")
                     else:
-                        logger.debug(f"Skipping incomplete Arista neighbor: {current_neighbor}")
+                        logger.debug(f"Arista: Skipping incomplete neighbor: {current_neighbor}")
+
                 current_neighbor = {}
-                # Parse: "Interface Ethernet1 detected 1 LLDP neighbors"
-                match = re.search(r'Interface\s+(\S+)', line)
+                # Parse: "Interface Ethernet3/3 detected 1 LLDP neighbors:"
+                match = re.search(r'Interface\s+(\S+)\s+detected', line)
                 if match:
                     current_neighbor['local_port'] = match.group(1)
+                    logger.debug(f"Arista: Processing interface {current_neighbor['local_port']}")
 
-            elif 'System Name:' in line or 'Neighbor Device ID:' in line:
+            # Parse "- System Name: "MikroTik CRS326""
+            elif line.startswith('- System Name:'):
                 parts = line.split(':', 1)
                 if len(parts) == 2:
                     device_name = parts[1].strip().strip('"')
-                    # Only set if non-empty
                     if device_name:
                         current_neighbor['remote_device'] = device_name
+                        logger.debug(f"Arista: Found System Name: {device_name}")
 
-            elif 'Port ID:' in line or 'Neighbor Port ID:' in line:
+            # Parse "Port ID     : "qsfpplus1-1"" (note the indentation with spaces)
+            elif line.startswith('Port ID') and ':' in line:
                 parts = line.split(':', 1)
                 if len(parts) == 2:
                     port_id = parts[1].strip().strip('"')
-                    # Only set if non-empty
                     if port_id:
                         current_neighbor['remote_port'] = port_id
+                        logger.debug(f"Arista: Found Port ID: {port_id}")
 
-            elif 'Port Description:' in line:
+            # Parse "- Port Description: "trunk/qsfpplus1-1""
+            elif line.startswith('- Port Description:'):
                 parts = line.split(':', 1)
                 if len(parts) == 2:
                     port_desc = parts[1].strip().strip('"')
                     if port_desc:
                         current_neighbor['remote_desc'] = port_desc
+                        logger.debug(f"Arista: Found Port Description: {port_desc}")
 
         # Add last neighbor (only if complete)
         if current_neighbor and 'local_port' in current_neighbor:
