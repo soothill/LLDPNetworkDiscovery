@@ -96,12 +96,26 @@ class SSHConnection:
                 }
             }
 
+            # Define keyboard-interactive handler for HP Aruba switches
+            def auth_handler(title, instructions, prompt_list):
+                """Handle keyboard-interactive authentication (used by HP Aruba)"""
+                answers = []
+                for prompt in prompt_list:
+                    self.logger.debug(f"Keyboard-interactive prompt: {prompt}")
+                    # Return the password for any prompt (typically "Password: ")
+                    if self.device.password:
+                        answers.append(self.device.password)
+                    else:
+                        answers.append('')
+                return answers
+
             if self.device.ssh_key:
                 connect_params['key_filename'] = self.device.ssh_key
                 self.logger.debug(f"Using SSH key authentication: {self.device.ssh_key}")
             elif self.device.password:
+                # Provide password parameter - paramiko will try both password and keyboard-interactive
                 connect_params['password'] = self.device.password
-                self.logger.debug(f"Using password authentication (password length: {len(self.device.password)})")
+                self.logger.debug(f"Using password authentication with keyboard-interactive support (password length: {len(self.device.password)})")
             else:
                 self.logger.error(f"No authentication method provided for {self.device.hostname}")
                 return False
@@ -291,13 +305,39 @@ class SSHConnection:
             self.logger.debug(f"Successfully connected to {self.device.hostname} ({self.device.ip_address})")
             return True
 
-        except paramiko.AuthenticationException:
+        except paramiko.AuthenticationException as auth_err:
+            # Try explicit keyboard-interactive authentication as a fallback
+            # HP Aruba switches often require this method
+            self.logger.debug(f"Standard auth failed, trying keyboard-interactive: {auth_err}")
+
+            if self.device.password:
+                try:
+                    self.logger.info(f"Retrying {self.device.hostname} with explicit keyboard-interactive authentication...")
+
+                    # Get transport from the existing connection attempt
+                    transport = self.client.get_transport()
+                    if transport and transport.is_active():
+                        # Define handler for keyboard-interactive auth
+                        def handler(title, instructions, prompt_list):
+                            if prompt_list:
+                                self.logger.debug(f"Keyboard-interactive prompts: {[p[0] for p in prompt_list]}")
+                            return [self.device.password] * len(prompt_list)
+
+                        # Try keyboard-interactive auth
+                        transport.auth_interactive(self.device.username, handler)
+                        self.logger.info(f"✓ Successfully authenticated to {self.device.hostname} using keyboard-interactive")
+                        return True
+                except Exception as ki_err:
+                    self.logger.debug(f"Keyboard-interactive auth also failed: {ki_err}")
+
+            # If we get here, authentication truly failed
             self.logger.error("")
             self.logger.error("=" * 70)
             self.logger.error(f"✗ AUTHENTICATION FAILED - {self.device.hostname}")
             self.logger.error("=" * 70)
             self.logger.error(f"Device: {self.device.hostname} ({self.device.ip_address})")
             self.logger.error(f"Username: {self.device.username}")
+            self.logger.error(f"Auth error: {auth_err}")
             self.logger.error("")
             self.logger.error("Possible causes:")
             self.logger.error("  1. Incorrect password")
