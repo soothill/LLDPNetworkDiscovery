@@ -1,5 +1,5 @@
 paramiko>=3.0.0
 networkx>=3.0
 matplotlib>=3.5.0
-# SNMP support - using raw ASN.1/BER encoding (stable, no pysnmp dependency issues)
-pyasn1>=0.4.8
+# SNMP support now handled by Go binary (snmp_collector)
+# Run 'make build' to compile the Go SNMP collector

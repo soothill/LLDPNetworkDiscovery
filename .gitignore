@@ -46,3 +46,9 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Go binaries
+snmp_collector
+snmp_collector_linux
+snmp_collector_darwin
+go.sum

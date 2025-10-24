@@ -18,18 +18,12 @@ from collections import defaultdict
 import logging
 from math import cos, sin
 from datetime import datetime
+import subprocess
+import os
 
-# For SNMP support - using raw ASN.1/BER encoding to avoid pysnmp dependency hell
-SNMP_AVAILABLE = False
-try:
-    from pyasn1.codec.ber import encoder, decoder
-    from pyasn1.type import univ
-    import socket
-    SNMP_AVAILABLE = True
-    print("SUCCESS: SNMP support enabled using pyasn1 (no pysnmp dependency)")
-except ImportError as e:
-    print(f"WARNING: pyasn1 not available, SNMP features disabled: {e}")
-    print("Install with: pip install pyasn1>=0.4.8")
+# SNMP support is now handled by a separate Go binary (snmp_collector)
+# This provides stable, reliable SNMP without Python library dependency issues
+# Run 'make build' to compile the Go SNMP collector
 
 # For graphical output
 try:
@@ -1946,33 +1940,107 @@ class LLDPParser:
 
 
 class SNMPLLDPCollector:
-    """Collect LLDP information via SNMP using raw UDP/ASN.1 (no pysnmp dependency)"""
+    """Collect LLDP information via SNMP using Go-based collector (stable, reliable)"""
 
-    # LLDP-MIB OIDs (IEEE 802.1AB)
-    LLDP_REM_TABLE = '1.0.8802.1.1.2.1.4.1.1'  # lldpRemTable
-    LLDP_REM_CHASSIS_ID_SUBTYPE = f'{LLDP_REM_TABLE}.4'  # lldpRemChassisIdSubtype
-    LLDP_REM_CHASSIS_ID = f'{LLDP_REM_TABLE}.5'  # lldpRemChassisId
-    LLDP_REM_PORT_ID_SUBTYPE = f'{LLDP_REM_TABLE}.6'  # lldpRemPortIdSubtype
-    LLDP_REM_PORT_ID = f'{LLDP_REM_TABLE}.7'  # lldpRemPortId
-    LLDP_REM_PORT_DESC = f'{LLDP_REM_TABLE}.8'  # lldpRemPortDesc
-    LLDP_REM_SYS_NAME = f'{LLDP_REM_TABLE}.9'  # lldpRemSysName
-    LLDP_REM_SYS_DESC = f'{LLDP_REM_TABLE}.10'  # lldpRemSysDesc
-
-    # Local interface name mapping
-    LLDP_LOC_PORT_DESC = '1.0.8802.1.1.2.1.3.7.1.4'  # lldpLocPortDesc
-    IF_NAME = '1.3.6.1.2.1.31.1.1.1.1'  # ifName
-    IF_DESCR = '1.3.6.1.2.1.2.2.1.2'  # ifDescr
     SYS_NAME_OID = '1.3.6.1.2.1.1.5.0'  # sysName for testing
 
     def __init__(self, device: DeviceConfig):
         self.device = device
         self.logger = logging.getLogger(__name__)
-        self.request_id = 1
 
-        if not SNMP_AVAILABLE:
-            raise ImportError("pyasn1 library is required for SNMP operations. Install with: pip install pyasn1>=0.4.8")
+        # Find the Go snmp_collector binary
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        self.collector_path = None
 
-    def _build_snmp_get(self, oid: str, community: str = 'public') -> bytes:
+        # Try different possible binary names/locations
+        possible_paths = [
+            os.path.join(script_dir, 'snmp_collector'),
+            os.path.join(script_dir, 'snmp_collector_linux'),
+            os.path.join(script_dir, 'snmp_collector_darwin'),
+            './snmp_collector',
+        ]
+
+        for path in possible_paths:
+            if os.path.exists(path) and os.access(path, os.X_OK):
+                self.collector_path = path
+                break
+
+        if not self.collector_path:
+            raise FileNotFoundError(
+                "SNMP collector binary not found. Please run 'make build' to compile it.\n"
+                "Requires Go 1.21+ (install from https://golang.org/dl/)"
+            )
+
+    def test_connectivity(self) -> bool:
+        """Test SNMP connectivity"""
+        try:
+            cmd = [
+                self.collector_path,
+                '-host', self.device.ip_address,
+                '-community', self.device.snmp_community or 'public',
+                '-port', str(self.device.snmp_port),
+                '-test'
+            ]
+
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+
+            if result.returncode == 0:
+                self.logger.info(f"SNMP test successful: {result.stdout.strip()}")
+                return True
+            else:
+                self.logger.error(f"SNMP test failed: {result.stderr.strip()}")
+                return False
+
+        except Exception as e:
+            self.logger.error(f"SNMP test error: {e}")
+            return False
+
+    def get_lldp_neighbors(self) -> List[LLDPNeighbor]:
+        """Retrieve LLDP neighbors via SNMP using Go collector"""
+        try:
+            cmd = [
+                self.collector_path,
+                '-host', self.device.ip_address,
+                '-community', self.device.snmp_community or 'public',
+                '-port', str(self.device.snmp_port),
+                '-device', self.device.hostname
+            ]
+
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+
+            if result.returncode != 0:
+                self.logger.error(f"SNMP collector failed: {result.stderr}")
+                return []
+
+            # Parse JSON output
+            neighbors_data = json.loads(result.stdout)
+
+            neighbors = []
+            for n in neighbors_data:
+                neighbors.append(LLDPNeighbor(
+                    local_device=n['local_device'],
+                    local_port=n['local_port'],
+                    remote_device=n['remote_device'],
+                    remote_port=n['remote_port'],
+                    remote_description=n.get('remote_description', '')
+                ))
+
+            self.logger.info(f"Found {len(neighbors)} LLDP neighbors via SNMP on {self.device.hostname}")
+            return neighbors
+
+        except subprocess.TimeoutExpired:
+            self.logger.error(f"SNMP collection timeout for {self.device.hostname}")
+            return []
+        except json.JSONDecodeError as e:
+            self.logger.error(f"Failed to parse SNMP collector output: {e}")
+            return []
+        except Exception as e:
+            self.logger.error(f"SNMP collection failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+
+    def _build_snmp_get_OLD_REMOVED(self, oid: str, community: str = 'public') -> bytes:
         """Build SNMPv2c GET request packet"""
         from pyasn1.type import tag
 
@@ -2519,28 +2587,22 @@ class LLDPDiscovery:
 
         # Test SNMP connection if enabled
         if device.use_snmp:
-            if not SNMP_AVAILABLE:
-                self.logger.error(f"✗ {device.hostname} - SNMP requested but pyasn1 not available")
-                self.logger.error("Solution: pip install pyasn1>=0.4.8")
-                return False
-
             self.logger.info(f"Testing SNMP connectivity to {device.hostname}...")
             try:
-                # Test SNMP using raw packets
                 snmp_collector = SNMPLLDPCollector(device)
-                sys_name = snmp_collector.snmp_get(snmp_collector.SYS_NAME_OID)
-
-                if sys_name:
-                    self.logger.info(f"✓ {device.hostname} - SNMP connection successful (sysName: {sys_name})")
+                if snmp_collector.test_connectivity():
+                    self.logger.info(f"✓ {device.hostname} - SNMP connection successful")
                     return True
                 else:
-                    self.logger.error(f"✗ {device.hostname} - SNMP connection failed (no response)")
+                    self.logger.error(f"✗ {device.hostname} - SNMP connection failed")
                     return False
 
+            except FileNotFoundError as e:
+                self.logger.error(f"✗ {device.hostname} - {e}")
+                self.logger.error("Run 'make build' to compile the SNMP collector")
+                return False
             except Exception as e:
                 self.logger.error(f"✗ {device.hostname} - SNMP test failed: {e}")
-                import traceback
-                traceback.print_exc()
                 return False
 
         # Test SSH connection for non-SNMP devices
