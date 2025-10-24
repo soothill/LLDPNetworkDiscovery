@@ -1,5 +1,5 @@
 paramiko>=3.0.0
 networkx>=3.0
 matplotlib>=3.5.0
-# SNMP support - use modern pysnmp v6.2.6 (known working version)
-pysnmp==6.2.6
+# SNMP support - use pysnmp 7.1.9 (latest with stable API)
+pysnmp==7.1.9

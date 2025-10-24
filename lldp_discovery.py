@@ -36,34 +36,48 @@ except ImportError:
     pysnmp = None
 
 if pysnmp:
-    # Try modern pysnmp v6+ with sync API
+    # Try pysnmp 7.x with v1arch API
     try:
-        from pysnmp.hlapi.v3arch.sync import (
+        from pysnmp.hlapi.v1arch.asyncio import (
             CommunityData, UdpTransportTarget, ContextData,
             ObjectType, ObjectIdentity, SnmpEngine,
             getCmd, nextCmd
         )
         SNMP_AVAILABLE = True
-        print(f"SUCCESS: Using pysnmp v6+ sync API (version {pysnmp_version})")
+        print(f"SUCCESS: Using pysnmp 7.x v1arch asyncio API (version {pysnmp_version})")
     except (ImportError, AttributeError, ModuleNotFoundError) as e:
-        print(f"DEBUG: v6+ sync API import failed: {e}")
-        # Try legacy pysnmp v4/v5 with classic API
+        print(f"DEBUG: v7 v1arch asyncio import failed: {e}")
+        # Try pysnmp 6.x with v3arch API
         try:
-            from pysnmp.hlapi import (
+            from pysnmp.hlapi.v3arch.asyncio import (
                 CommunityData, UdpTransportTarget, ContextData,
                 ObjectType, ObjectIdentity, SnmpEngine,
                 getCmd, nextCmd
             )
             SNMP_AVAILABLE = True
-            print(f"SUCCESS: Using pysnmp v4/v5 classic API (version {pysnmp_version})")
+            print(f"SUCCESS: Using pysnmp 6.x v3arch asyncio API (version {pysnmp_version})")
         except (ImportError, AttributeError, ModuleNotFoundError) as e:
-            print(f"DEBUG: v4/v5 classic API import failed: {e}")
-            SNMP_AVAILABLE = False
+            print(f"DEBUG: v6 v3arch asyncio import failed: {e}")
+            # Try legacy pysnmp v4/v5 with classic API
+            try:
+                from pysnmp.hlapi import (
+                    CommunityData, UdpTransportTarget, ContextData,
+                    ObjectType, ObjectIdentity, SnmpEngine,
+                    getCmd, nextCmd
+                )
+                SNMP_AVAILABLE = True
+                print(f"SUCCESS: Using pysnmp v4/v5 classic API (version {pysnmp_version})")
+            except (ImportError, AttributeError, ModuleNotFoundError) as e:
+                print(f"DEBUG: v4/v5 classic API import failed: {e}")
+                SNMP_AVAILABLE = False
+            except Exception as e:
+                print(f"DEBUG: v4/v5 import unexpected error: {e}")
+                SNMP_AVAILABLE = False
         except Exception as e:
-            print(f"DEBUG: v4/v5 import unexpected error: {e}")
+            print(f"DEBUG: v6 import unexpected error: {e}")
             SNMP_AVAILABLE = False
     except Exception as e:
-        print(f"DEBUG: v6+ import unexpected error: {e}")
+        print(f"DEBUG: v7 import unexpected error: {e}")
         SNMP_AVAILABLE = False
 
 if not SNMP_AVAILABLE:
@@ -73,7 +87,7 @@ if not SNMP_AVAILABLE:
     print(f"Solution: Completely remove and reinstall pysnmp")
     print(f"  pip uninstall pysnmp pysnmp-lextudio pyasn1 pysmi -y")
     print(f"  pip cache purge")
-    print(f"  pip install pysnmp==6.2.6")
+    print(f"  pip install pysnmp==7.1.9")
     print(f"")
 
 # For graphical output
