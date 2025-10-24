@@ -2084,13 +2084,16 @@ class LLDPDiscovery:
 
         # Device-specific LLDP commands
         # Note: enable mode is now handled within execute_shell_command()
+        # For Linux/Proxmox: use sudo if not root, otherwise run directly
+        lldp_cmd_linux = 'lldpctl' if device.username == 'root' else 'sudo lldpctl'
+
         lldp_commands = {
-            'linux': 'sudo lldpctl',
+            'linux': lldp_cmd_linux,
             'mikrotik': '/ip neighbor print detail without-paging where identity!=""',
             'arista': 'show lldp neighbors detail',
             'aruba': 'show lldp info remote-device',
             'ruijie': 'show lldp neighbors detail',
-            'proxmox': 'sudo lldpctl'
+            'proxmox': lldp_cmd_linux
         }
 
         command = lldp_commands.get(device.device_type)
