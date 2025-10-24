@@ -17,6 +17,7 @@ from dataclasses import dataclass, asdict
 from collections import defaultdict
 import logging
 from math import cos, sin
+from datetime import datetime
 
 # For graphical output
 try:
@@ -790,12 +791,44 @@ class PortSpeedDetector:
     """Detects port speeds for different device types"""
 
     @staticmethod
+    def _log_speed_detection(device_hostname: str, device_type: str, command: str, output: str, ports: List[str], parsed_speeds: Dict[str, str]):
+        """Log speed detection details to a debug file for analysis"""
+        try:
+            log_filename = "speed_detection_debug.log"
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            with open(log_filename, 'a') as f:
+                f.write("\n" + "=" * 100 + "\n")
+                f.write(f"TIMESTAMP: {timestamp}\n")
+                f.write(f"DEVICE: {device_hostname} ({device_type})\n")
+                f.write(f"COMMAND: {command}\n")
+                f.write(f"PORTS REQUESTED: {', '.join(ports)}\n")
+                f.write("-" * 100 + "\n")
+                f.write("RAW OUTPUT:\n")
+                f.write("-" * 100 + "\n")
+                f.write(output if output else "(empty output)\n")
+                f.write("\n")
+                f.write("-" * 100 + "\n")
+                f.write("PARSED SPEEDS:\n")
+                f.write("-" * 100 + "\n")
+                for port, speed in sorted(parsed_speeds.items()):
+                    f.write(f"  {port:20s} -> {speed}\n")
+                f.write("=" * 100 + "\n\n")
+        except Exception as e:
+            # Don't fail if logging fails
+            pass
+
+    @staticmethod
     def get_port_speeds_linux(ssh: SSHConnection, ports: List[str]) -> Dict[str, str]:
         """Get port speeds for Linux interfaces using ethtool"""
         speeds = {}
+        all_output = []
+
         for port in ports:
             # Try ethtool first (with sudo for permission)
             stdout, stderr, exit_code = ssh.execute_command(f"sudo ethtool {port} 2>/dev/null | grep -i speed")
+            all_output.append(f"Port {port} (ethtool):\n{stdout if stdout else '(no output)'}\n")
+
             if exit_code == 0 and stdout:
                 # Parse "Speed: 1000Mb/s" or "Speed: 10000Mb/s"
                 match = re.search(r'Speed:\s*(\d+)Mb/s', stdout, re.IGNORECASE)
@@ -806,6 +839,8 @@ class PortSpeedDetector:
 
             # Fallback: try /sys/class/net (usually readable without sudo)
             stdout, stderr, exit_code = ssh.execute_command(f"cat /sys/class/net/{port}/speed 2>/dev/null")
+            all_output.append(f"Port {port} (/sys/class/net):\n{stdout if stdout else '(no output)'}\n")
+
             if exit_code == 0 and stdout.strip().isdigit():
                 speed_mbps = int(stdout.strip())
                 if speed_mbps > 0:
@@ -813,6 +848,14 @@ class PortSpeedDetector:
                     continue
 
             speeds[port] = "Unknown"
+
+        # Log the detection results
+        PortSpeedDetector._log_speed_detection(
+            ssh.device.hostname, "Linux",
+            "ethtool / /sys/class/net/*/speed",
+            "\n".join(all_output),
+            ports, speeds
+        )
 
         return speeds
 
@@ -875,6 +918,14 @@ class PortSpeedDetector:
             if port not in speeds:
                 speeds[port] = "Unknown"
 
+        # Log the detection results
+        PortSpeedDetector._log_speed_detection(
+            ssh.device.hostname, "MikroTik",
+            "/interface ethernet print detail without-paging",
+            stdout if exit_code == 0 else "(command failed)",
+            ports, speeds
+        )
+
         return speeds
 
     @staticmethod
@@ -909,6 +960,14 @@ class PortSpeedDetector:
         for port in ports:
             if port not in speeds:
                 speeds[port] = "Unknown"
+
+        # Log the detection results
+        PortSpeedDetector._log_speed_detection(
+            ssh.device.hostname, "Arista",
+            "show interfaces status",
+            stdout if exit_code == 0 else "(command failed)",
+            ports, speeds
+        )
 
         return speeds
 
@@ -957,6 +1016,14 @@ class PortSpeedDetector:
         for port in ports:
             if port not in speeds:
                 speeds[port] = "Unknown"
+
+        # Log the detection results
+        PortSpeedDetector._log_speed_detection(
+            ssh.device.hostname, "HP Aruba",
+            "show interfaces brief",
+            stdout if exit_code == 0 else "(command failed)",
+            ports, speeds
+        )
 
         return speeds
 
@@ -1011,6 +1078,14 @@ class PortSpeedDetector:
         for port in ports:
             if port not in speeds:
                 speeds[port] = "Unknown"
+
+        # Log the detection results
+        PortSpeedDetector._log_speed_detection(
+            ssh.device.hostname, "Ruijie",
+            "show interfaces status",
+            stdout if exit_code == 0 else "(command failed)",
+            ports, speeds
+        )
 
         return speeds
 
