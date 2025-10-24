@@ -1,7 +1,5 @@
 paramiko>=3.0.0
 networkx>=3.0
 matplotlib>=3.5.0
-# SNMP support - use pysnmp-lextudio (Python 3.12+ compatible, synchronous API)
-pysnmp-lextudio>=6.2.2
+# SNMP support - using raw ASN.1/BER encoding (stable, no pysnmp dependency issues)
 pyasn1>=0.4.8
-pycryptodomex>=3.9.7

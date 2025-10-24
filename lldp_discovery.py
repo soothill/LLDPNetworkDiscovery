@@ -19,46 +19,17 @@ import logging
 from math import cos, sin
 from datetime import datetime
 
-# For SNMP support - use pysnmp-lextudio (Python 3.12+ compatible)
+# For SNMP support - using raw ASN.1/BER encoding to avoid pysnmp dependency hell
 SNMP_AVAILABLE = False
-CommunityData = UdpTransportTarget = ContextData = None
-ObjectType = ObjectIdentity = SnmpEngine = None
-getCmd = nextCmd = None
-
-# Try to import pysnmp (works for both pysnmp and pysnmp-lextudio)
 try:
-    import pysnmp
-    pysnmp_version = getattr(pysnmp, '__version__', 'unknown')
-    pysnmp_file = getattr(pysnmp, '__file__', 'unknown')
-    print(f"DEBUG: Found pysnmp version {pysnmp_version} at {pysnmp_file}")
-
-    # Import synchronous API (works with pysnmp-lextudio 6.2+)
-    from pysnmp.hlapi import (
-        getCmd, nextCmd, CommunityData, UdpTransportTarget,
-        ContextData, ObjectType, ObjectIdentity, SnmpEngine
-    )
+    from pyasn1.codec.ber import encoder, decoder
+    from pyasn1.type import univ
+    import socket
     SNMP_AVAILABLE = True
-    print(f"SUCCESS: Using pysnmp synchronous API (version {pysnmp_version})")
-
+    print("SUCCESS: SNMP support enabled using pyasn1 (no pysnmp dependency)")
 except ImportError as e:
-    print(f"DEBUG: pysnmp not installed or import failed: {e}")
-    pysnmp = None
-except (AttributeError, ModuleNotFoundError) as e:
-    print(f"ERROR: pysnmp import failed: {e}")
-    pysnmp = None
-except Exception as e:
-    print(f"ERROR: pysnmp unexpected error: {e}")
-    pysnmp = None
-
-if not SNMP_AVAILABLE:
-    print(f"")
-    print(f"ERROR: pysnmp library could not be imported correctly.")
-    print(f"")
-    print(f"Solution: Completely remove and reinstall pysnmp-lextudio")
-    print(f"  pip uninstall pysnmp pysnmp-lextudio pyasn1 pysmi -y")
-    print(f"  pip cache purge")
-    print(f"  pip install -r requirements.txt")
-    print(f"")
+    print(f"WARNING: pyasn1 not available, SNMP features disabled: {e}")
+    print("Install with: pip install pyasn1>=0.4.8")
 
 # For graphical output
 try:
@@ -1975,7 +1946,7 @@ class LLDPParser:
 
 
 class SNMPLLDPCollector:
-    """Collect LLDP information via SNMP when SSH is not available"""
+    """Collect LLDP information via SNMP using raw UDP/ASN.1 (no pysnmp dependency)"""
 
     # LLDP-MIB OIDs (IEEE 802.1AB)
     LLDP_REM_TABLE = '1.0.8802.1.1.2.1.4.1.1'  # lldpRemTable
@@ -1991,59 +1962,200 @@ class SNMPLLDPCollector:
     LLDP_LOC_PORT_DESC = '1.0.8802.1.1.2.1.3.7.1.4'  # lldpLocPortDesc
     IF_NAME = '1.3.6.1.2.1.31.1.1.1.1'  # ifName
     IF_DESCR = '1.3.6.1.2.1.2.2.1.2'  # ifDescr
+    SYS_NAME_OID = '1.3.6.1.2.1.1.5.0'  # sysName for testing
 
     def __init__(self, device: DeviceConfig):
         self.device = device
         self.logger = logging.getLogger(__name__)
+        self.request_id = 1
 
         if not SNMP_AVAILABLE:
-            raise ImportError("pysnmp library is required for SNMP operations. Install with: pip install pysnmp")
+            raise ImportError("pyasn1 library is required for SNMP operations. Install with: pip install pyasn1>=0.4.8")
 
-    def get_lldp_neighbors(self) -> List[LLDPNeighbor]:
-        """Retrieve LLDP neighbors via SNMP (synchronous)"""
-        neighbors = []
+    def _build_snmp_get(self, oid: str, community: str = 'public') -> bytes:
+        """Build SNMPv2c GET request packet"""
+        # Convert OID string to tuple of integers
+        oid_tuple = tuple(int(x) for x in oid.split('.'))
 
-        if self.device.snmp_version == '2c':
-            community = CommunityData(self.device.snmp_community or 'public')
-        else:
-            self.logger.error(f"SNMP version {self.device.snmp_version} not yet supported")
-            return neighbors
+        # Build SNMP packet structure
+        pdu = univ.Sequence()
+        pdu.setComponentByPosition(0, univ.Integer(self.request_id))
+        pdu.setComponentByPosition(1, univ.Integer(0))  # error-status
+        pdu.setComponentByPosition(2, univ.Integer(0))  # error-index
 
-        target = UdpTransportTarget((self.device.ip_address, self.device.snmp_port), timeout=5, retries=2)
+        # Variable bindings
+        varbinds = univ.Sequence()
+        varbind = univ.Sequence()
+        varbind.setComponentByPosition(0, univ.ObjectIdentifier(oid_tuple))
+        varbind.setComponentByPosition(1, univ.Null())
+        varbinds.setComponentByPosition(0, varbind)
+        pdu.setComponentByPosition(3, varbinds)
+
+        # Wrap in GetRequest PDU (tag 0xA0)
+        get_request = univ.Sequence()
+        get_request.setComponentByPosition(0, univ.Integer(1))  # version (SNMPv2c = 1)
+        get_request.setComponentByPosition(1, univ.OctetString(community))
+        get_request.setComponentByPosition(2, pdu)
+        get_request.getComponentByPosition(2).tagSet = univ.Sequence.tagSet.baseTag
+
+        self.request_id += 1
+        return encoder.encode(get_request)
+
+    def _build_snmp_getnext(self, oid: str, community: str = 'public') -> bytes:
+        """Build SNMPv2c GETNEXT request packet"""
+        oid_tuple = tuple(int(x) for x in oid.split('.'))
+
+        pdu = univ.Sequence()
+        pdu.setComponentByPosition(0, univ.Integer(self.request_id))
+        pdu.setComponentByPosition(1, univ.Integer(0))
+        pdu.setComponentByPosition(2, univ.Integer(0))
+
+        varbinds = univ.Sequence()
+        varbind = univ.Sequence()
+        varbind.setComponentByPosition(0, univ.ObjectIdentifier(oid_tuple))
+        varbind.setComponentByPosition(1, univ.Null())
+        varbinds.setComponentByPosition(0, varbind)
+        pdu.setComponentByPosition(3, varbinds)
+
+        # Wrap in GetNextRequest PDU
+        message = univ.Sequence()
+        message.setComponentByPosition(0, univ.Integer(1))  # SNMPv2c
+        message.setComponentByPosition(1, univ.OctetString(community))
+        message.setComponentByPosition(2, pdu)
+
+        self.request_id += 1
+        return encoder.encode(message)
+
+    def _send_snmp(self, packet: bytes, timeout: float = 5.0) -> Optional[bytes]:
+        """Send SNMP packet via UDP and return response"""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(timeout)
 
         try:
-            # First, get local port descriptions to map port IDs to interface names
-            port_map = self._get_local_port_map(community, target)
+            sock.sendto(packet, (self.device.ip_address, self.device.snmp_port))
+            response, _ = sock.recvfrom(65535)
+            return response
+        except socket.timeout:
+            self.logger.debug(f"SNMP timeout for {self.device.ip_address}")
+            return None
+        except Exception as e:
+            self.logger.debug(f"SNMP send error: {e}")
+            return None
+        finally:
+            sock.close()
+
+    def _parse_snmp_response(self, response: bytes) -> Optional[Dict[str, any]]:
+        """Parse SNMP response packet"""
+        try:
+            message, _ = decoder.decode(response, asn1Spec=univ.Sequence())
+
+            # Extract version, community, PDU
+            version = int(message[0])
+            community = str(message[1])
+            pdu = message[2]
+
+            request_id = int(pdu[0])
+            error_status = int(pdu[1])
+            error_index = int(pdu[2])
+            varbinds = pdu[3]
+
+            if error_status != 0:
+                return None
+
+            # Extract first varbind
+            if len(varbinds) > 0:
+                varbind = varbinds[0]
+                oid = '.'.join(str(x) for x in varbind[0])
+                value = varbind[1]
+
+                # Convert value to string
+                if hasattr(value, 'prettyPrint'):
+                    value_str = value.prettyPrint()
+                else:
+                    value_str = str(value)
+
+                return {'oid': oid, 'value': value_str}
+
+            return None
+        except Exception as e:
+            self.logger.debug(f"SNMP parse error: {e}")
+            return None
+
+    def snmp_get(self, oid: str) -> Optional[str]:
+        """Perform SNMP GET operation"""
+        community = self.device.snmp_community or 'public'
+        packet = self._build_snmp_get(oid, community)
+        response = self._send_snmp(packet)
+
+        if response:
+            result = self._parse_snmp_response(response)
+            if result:
+                return result['value']
+        return None
+
+    def snmp_walk(self, base_oid: str) -> Dict[str, str]:
+        """Perform SNMP WALK operation"""
+        results = {}
+        community = self.device.snmp_community or 'public'
+        current_oid = base_oid
+
+        for _ in range(1000):  # Safety limit
+            packet = self._build_snmp_getnext(current_oid, community)
+            response = self._send_snmp(packet)
+
+            if not response:
+                break
+
+            result = self._parse_snmp_response(response)
+            if not result:
+                break
+
+            # Check if we've walked past the base OID
+            if not result['oid'].startswith(base_oid):
+                break
+
+            results[result['oid']] = result['value']
+            current_oid = result['oid']
+
+        return results
+
+    def get_lldp_neighbors(self) -> List[LLDPNeighbor]:
+        """Retrieve LLDP neighbors via SNMP"""
+        neighbors = []
+
+        if self.device.snmp_version != '2c':
+            self.logger.error(f"SNMP version {self.device.snmp_version} not yet supported (only SNMPv2c)")
+            return neighbors
+
+        try:
+            # Get local port descriptions
+            port_map = self._get_local_port_map()
 
             # Get remote system names
-            remote_systems = self._snmp_walk(community, target, self.LLDP_REM_SYS_NAME)
+            remote_systems = self.snmp_walk(self.LLDP_REM_SYS_NAME)
 
             # Get remote port IDs
-            remote_ports = self._snmp_walk(community, target, self.LLDP_REM_PORT_ID)
+            remote_ports = self.snmp_walk(self.LLDP_REM_PORT_ID)
 
             # Get remote port descriptions
-            remote_descs = self._snmp_walk(community, target, self.LLDP_REM_PORT_DESC)
+            remote_descs = self.snmp_walk(self.LLDP_REM_PORT_DESC)
 
-            # Parse the LLDP remote table entries
-            # OID format: .1.0.8802.1.1.2.1.4.1.1.X.timeMark.localPortNum.remoteIndex
+            # Parse LLDP remote table entries
             for oid, remote_name in remote_systems.items():
-                # Extract indices from OID
                 oid_parts = oid.split('.')
                 if len(oid_parts) < 3:
                     continue
 
-                # The last three parts are: timeMark, localPortNum, remoteIndex
+                # Extract: timeMark, localPortNum, remoteIndex
                 time_mark = oid_parts[-3]
                 local_port_num = oid_parts[-2]
                 remote_index = oid_parts[-1]
-
-                # Reconstruct the index for looking up other fields
                 index_suffix = f"{time_mark}.{local_port_num}.{remote_index}"
 
                 # Get local port name
                 local_port = port_map.get(local_port_num, f"Port{local_port_num}")
 
-                # Get remote port ID (convert from hex if needed)
+                # Get remote port ID
                 remote_port_oid = f"{self.LLDP_REM_PORT_ID}.{index_suffix}"
                 remote_port = remote_ports.get(remote_port_oid, '')
 
@@ -2051,7 +2163,6 @@ class SNMPLLDPCollector:
                 remote_desc_oid = f"{self.LLDP_REM_PORT_DESC}.{index_suffix}"
                 remote_desc = remote_descs.get(remote_desc_oid, '')
 
-                # Clean up remote system name
                 remote_name = remote_name.strip()
                 remote_port = self._decode_port_id(remote_port)
 
@@ -2069,68 +2180,39 @@ class SNMPLLDPCollector:
 
         except Exception as e:
             self.logger.error(f"SNMP LLDP retrieval failed for {self.device.hostname}: {e}")
+            import traceback
+            traceback.print_exc()
 
         return neighbors
 
-    def _get_local_port_map(self, community, target) -> Dict[str, str]:
+    def _get_local_port_map(self) -> Dict[str, str]:
         """Map local port numbers to interface names"""
         port_map = {}
 
-        # Try lldpLocPortDesc first (LLDP-specific port descriptions)
-        lldp_ports = self._snmp_walk(community, target, self.LLDP_LOC_PORT_DESC)
+        # Try lldpLocPortDesc first
+        lldp_ports = self.snmp_walk(self.LLDP_LOC_PORT_DESC)
         for oid, desc in lldp_ports.items():
             port_num = oid.split('.')[-1]
             port_map[port_num] = desc.strip()
 
-        # If that didn't work, try ifName
+        # Try ifName
         if not port_map:
-            if_names = self._snmp_walk(community, target, self.IF_NAME)
+            if_names = self.snmp_walk(self.IF_NAME)
             for oid, name in if_names.items():
                 port_num = oid.split('.')[-1]
                 port_map[port_num] = name.strip()
 
         # Last resort: ifDescr
         if not port_map:
-            if_descrs = self._snmp_walk(community, target, self.IF_DESCR)
+            if_descrs = self.snmp_walk(self.IF_DESCR)
             for oid, desc in if_descrs.items():
                 port_num = oid.split('.')[-1]
                 port_map[port_num] = desc.strip()
 
         return port_map
 
-    def _snmp_walk(self, community, target, oid: str) -> Dict[str, str]:
-        """Perform SNMP walk and return OID -> value dictionary (synchronous)"""
-        results = {}
-
-        try:
-            for (errorIndication, errorStatus, errorIndex, varBinds) in nextCmd(
-                SnmpEngine(),
-                community,
-                target,
-                ContextData(),
-                ObjectType(ObjectIdentity(oid)),
-                lexicographicMode=False
-            ):
-                if errorIndication:
-                    self.logger.debug(f"SNMP error during walk of {oid}: {errorIndication}")
-                    break
-                elif errorStatus:
-                    self.logger.debug(f"SNMP error status during walk of {oid}: {errorStatus.prettyPrint()}")
-                    break
-                else:
-                    for varBind in varBinds:
-                        oid_str = str(varBind[0])
-                        value = str(varBind[1])
-                        results[oid_str] = value
-
-        except Exception as e:
-            self.logger.debug(f"SNMP walk exception for {oid}: {e}")
-
-        return results
-
     def _decode_port_id(self, port_id: str) -> str:
         """Decode port ID from SNMP (may be hex string or regular string)"""
-        # If it looks like a hex string (e.g., "0x1a2b3c"), decode it
         if port_id.startswith('0x'):
             try:
                 hex_str = port_id[2:]
@@ -2138,7 +2220,6 @@ class SNMPLLDPCollector:
                 return decoded.strip()
             except:
                 pass
-
         return port_id.strip()
 
 
@@ -2246,37 +2327,27 @@ class LLDPDiscovery:
         # Test SNMP connection if enabled
         if device.use_snmp:
             if not SNMP_AVAILABLE:
-                self.logger.error(f"✗ {device.hostname} - SNMP requested but pysnmp not available or incompatible")
-                self.logger.error("Solution: pip uninstall pysnmp pysnmp-lextudio pyasn1 pysmi -y")
-                self.logger.error("          pip cache purge")
-                self.logger.error("          pip install -r requirements.txt")
+                self.logger.error(f"✗ {device.hostname} - SNMP requested but pyasn1 not available")
+                self.logger.error("Solution: pip install pyasn1>=0.4.8")
                 return False
 
             self.logger.info(f"Testing SNMP connectivity to {device.hostname}...")
             try:
-                # Synchronous SNMP test with pysnmp-lextudio
-                community = CommunityData(device.snmp_community or 'public')
-                target = UdpTransportTarget((device.ip_address, device.snmp_port), timeout=5, retries=1)
+                # Test SNMP using raw packets
+                snmp_collector = SNMPLLDPCollector(device)
+                sys_name = snmp_collector.snmp_get(snmp_collector.SYS_NAME_OID)
 
-                # Query sysName (1.3.6.1.2.1.1.5.0) as a simple connectivity test
-                errorIndication, errorStatus, errorIndex, varBinds = next(
-                    getCmd(SnmpEngine(), community, target, ContextData(),
-                           ObjectType(ObjectIdentity('1.3.6.1.2.1.1.5.0')))
-                )
-
-                if errorIndication:
-                    self.logger.error(f"✗ {device.hostname} - SNMP connection failed: {errorIndication}")
-                    return False
-                elif errorStatus:
-                    self.logger.error(f"✗ {device.hostname} - SNMP error: {errorStatus.prettyPrint()}")
-                    return False
-                else:
-                    sys_name = str(varBinds[0][1]) if varBinds else "Unknown"
+                if sys_name:
                     self.logger.info(f"✓ {device.hostname} - SNMP connection successful (sysName: {sys_name})")
                     return True
+                else:
+                    self.logger.error(f"✗ {device.hostname} - SNMP connection failed (no response)")
+                    return False
 
             except Exception as e:
                 self.logger.error(f"✗ {device.hostname} - SNMP test failed: {e}")
+                import traceback
+                traceback.print_exc()
                 return False
 
         # Test SSH connection for non-SNMP devices
