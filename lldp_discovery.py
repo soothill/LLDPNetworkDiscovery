@@ -19,46 +19,45 @@ import logging
 from math import cos, sin
 from datetime import datetime
 
-# For SNMP support - comprehensive import handling for all pysnmp versions
+# For SNMP support - use pysnmp-lextudio (Python 3.12+ compatible)
 SNMP_AVAILABLE = False
 CommunityData = UdpTransportTarget = ContextData = None
 ObjectType = ObjectIdentity = SnmpEngine = None
 getCmd = nextCmd = None
 
-# Debug: Check if pysnmp is installed at all
+# Try to import pysnmp (works for both pysnmp and pysnmp-lextudio)
 try:
     import pysnmp
     pysnmp_version = getattr(pysnmp, '__version__', 'unknown')
     pysnmp_file = getattr(pysnmp, '__file__', 'unknown')
     print(f"DEBUG: Found pysnmp version {pysnmp_version} at {pysnmp_file}")
-except ImportError:
-    print("DEBUG: pysnmp package not found")
-    pysnmp = None
 
-if pysnmp:
-    # Use pysnmp 4.4.12 synchronous API (stable and simple)
-    try:
-        from pysnmp.hlapi import (
-            getCmd, nextCmd, CommunityData, UdpTransportTarget,
-            ContextData, ObjectType, ObjectIdentity, SnmpEngine
-        )
-        SNMP_AVAILABLE = True
-        print(f"SUCCESS: Using pysnmp 4.4.12 synchronous API (version {pysnmp_version})")
-    except (ImportError, AttributeError, ModuleNotFoundError) as e:
-        print(f"ERROR: pysnmp 4.4.12 import failed: {e}")
-        SNMP_AVAILABLE = False
-    except Exception as e:
-        print(f"ERROR: pysnmp import unexpected error: {e}")
-        SNMP_AVAILABLE = False
+    # Import synchronous API (works with pysnmp-lextudio 6.2+)
+    from pysnmp.hlapi import (
+        getCmd, nextCmd, CommunityData, UdpTransportTarget,
+        ContextData, ObjectType, ObjectIdentity, SnmpEngine
+    )
+    SNMP_AVAILABLE = True
+    print(f"SUCCESS: Using pysnmp synchronous API (version {pysnmp_version})")
+
+except ImportError as e:
+    print(f"DEBUG: pysnmp not installed or import failed: {e}")
+    pysnmp = None
+except (AttributeError, ModuleNotFoundError) as e:
+    print(f"ERROR: pysnmp import failed: {e}")
+    pysnmp = None
+except Exception as e:
+    print(f"ERROR: pysnmp unexpected error: {e}")
+    pysnmp = None
 
 if not SNMP_AVAILABLE:
     print(f"")
     print(f"ERROR: pysnmp library could not be imported correctly.")
     print(f"")
-    print(f"Solution: Completely remove and reinstall pysnmp 4.4.12")
+    print(f"Solution: Completely remove and reinstall pysnmp-lextudio")
     print(f"  pip uninstall pysnmp pysnmp-lextudio pyasn1 pysmi -y")
     print(f"  pip cache purge")
-    print(f"  pip install pysnmp==4.4.12 pyasn1==0.4.8 pycryptodomex>=3.9.7")
+    print(f"  pip install -r requirements.txt")
     print(f"")
 
 # For graphical output
@@ -2248,13 +2247,14 @@ class LLDPDiscovery:
         if device.use_snmp:
             if not SNMP_AVAILABLE:
                 self.logger.error(f"✗ {device.hostname} - SNMP requested but pysnmp not available or incompatible")
-                self.logger.error("Try: pip uninstall pysnmp pysnmp-lextudio pyasn1 -y")
-                self.logger.error("Then: pip install -r requirements.txt")
+                self.logger.error("Solution: pip uninstall pysnmp pysnmp-lextudio pyasn1 pysmi -y")
+                self.logger.error("          pip cache purge")
+                self.logger.error("          pip install -r requirements.txt")
                 return False
 
             self.logger.info(f"Testing SNMP connectivity to {device.hostname}...")
             try:
-                # Synchronous SNMP test with pysnmp 4.4.12
+                # Synchronous SNMP test with pysnmp-lextudio
                 community = CommunityData(device.snmp_community or 'public')
                 target = UdpTransportTarget((device.ip_address, device.snmp_port), timeout=5, retries=1)
 
