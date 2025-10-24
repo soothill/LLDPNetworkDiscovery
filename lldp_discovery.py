@@ -2289,8 +2289,8 @@ class LLDPDiscovery:
                 return neighbors
             except Exception as e:
                 self.logger.error(f"SNMP collection failed for {device.hostname}: {e}")
-                self.logger.info(f"Falling back to SSH for {device.hostname}...")
-                # Fall through to SSH collection below
+                # When use_snmp is true, don't fall back to SSH (device doesn't support it)
+                return []
 
         # SSH-based collection
         ssh = SSHConnection(device)
