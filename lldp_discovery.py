@@ -131,47 +131,68 @@ class SSHConnection:
                     paramiko_logger.setLevel(logging.CRITICAL)
 
                     try:
-                        # Re-enable ssh-rsa in _key_info if it's missing (disabled in paramiko 2.9+)
+                        # CRITICAL: Re-enable ssh-rsa in _key_info (disabled in paramiko 2.9+)
+                        # This is required for most HP Aruba switches
+                        rsa_enabled = False
                         if 'ssh-rsa' not in transport_module.Transport._key_info:
                             try:
                                 from paramiko.rsakey import RSAKey
                                 transport_module.Transport._key_info['ssh-rsa'] = RSAKey
-                                self.logger.debug("Re-enabled ssh-rsa host key algorithm")
+                                self.logger.info("✓ Re-enabled ssh-rsa host key algorithm (required for HP Aruba)")
+                                rsa_enabled = True
                             except ImportError:
-                                self.logger.warning("Could not import RSAKey for ssh-rsa support")
+                                self.logger.error("✗ Could not import RSAKey - ssh-rsa will not be available!")
+                        else:
+                            self.logger.debug("ssh-rsa already available in _key_info")
+                            rsa_enabled = True
 
-                        # Check if ssh-dss is available
+                        # Check if ssh-dss is available (less common but still needed for very old devices)
+                        dss_enabled = False
                         if 'ssh-dss' not in transport_module.Transport._key_info:
                             try:
                                 from paramiko.dsskey import DSSKey
                                 transport_module.Transport._key_info['ssh-dss'] = DSSKey
                                 self.logger.debug("Re-enabled ssh-dss host key algorithm")
+                                dss_enabled = True
                             except ImportError:
                                 self.logger.debug("ssh-dss not available in this paramiko version")
+                        else:
+                            dss_enabled = True
 
                         # Build list of available host key algorithms
+                        # IMPORTANT: ssh-rsa must be near the top for HP Aruba compatibility
                         available_keys = [
+                            'ssh-rsa',  # FIRST - Legacy RSA needed for HP Aruba
                             'rsa-sha2-512',
                             'rsa-sha2-256',
-                            'ssh-rsa',  # Legacy - needed for older devices
                             'ssh-ed25519',
                             'ecdsa-sha2-nistp256',
                             'ecdsa-sha2-nistp384',
                             'ecdsa-sha2-nistp521',
                         ]
 
+                        # Add ssh-dss if available
+                        if dss_enabled:
+                            available_keys.append('ssh-dss')
+
                         # Filter to only include keys that are actually available
                         final_keys = []
                         for key in available_keys:
                             if key in transport_module.Transport._key_info:
                                 final_keys.append(key)
+                                self.logger.debug(f"  ✓ {key} - available")
+                            else:
+                                self.logger.debug(f"  ✗ {key} - not available in _key_info")
 
                         if not final_keys:
                             self.logger.error("No host key algorithms available!")
                             raise
 
+                        if 'ssh-rsa' not in final_keys:
+                            self.logger.error("WARNING: ssh-rsa not in final key list - connection may fail!")
+
                         transport_module.Transport._preferred_keys = tuple(final_keys)
-                        self.logger.debug(f"Enabled host key algorithms: {final_keys}")
+                        self.logger.info(f"Enabled {len(final_keys)} host key algorithms (ssh-rsa={'YES' if 'ssh-rsa' in final_keys else 'NO'})")
 
                         # Build list of available KEX algorithms (modern first, then legacy)
                         available_kex = [
