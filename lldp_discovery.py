@@ -864,7 +864,7 @@ class PortSpeedDetector:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
             # Version identifier for debugging
-            LOG_VERSION = "v2.4-arista-column-parsing"
+            LOG_VERSION = "v2.5-filter-vlan-interfaces"
 
             # On first write of the run, clear the log file
             write_mode = 'w' if not PortSpeedDetector._log_initialized else 'a'
@@ -2084,10 +2084,16 @@ class LLDPDiscovery:
 
         self.logger.debug(f"  Parsed {len(neighbors)} LLDP neighbors from {device.hostname}")
 
-        # Get port speeds for local ports
+        # Get port speeds for local ports (excluding virtual/VLAN interfaces)
         if neighbors:
-            local_ports = list(set([n.local_port for n in neighbors]))
-            self.logger.debug(f"Detecting speeds for ports: {local_ports}")
+            # Filter out virtual interfaces before speed detection
+            local_ports = list(set([n.local_port for n in neighbors if self._is_physical_interface(n.local_port)]))
+            self.logger.debug(f"Detecting speeds for physical ports only: {local_ports}")
+
+            # Log filtered virtual interfaces
+            virtual_ports = list(set([n.local_port for n in neighbors if not self._is_physical_interface(n.local_port)]))
+            if virtual_ports:
+                self.logger.debug(f"Skipping speed detection for virtual interfaces: {virtual_ports}")
 
             # For interactive devices (Aruba/Arista/Ruijie), use the pre-collected speed output
             if device.device_type in ['aruba', 'arista', 'ruijie']:
