@@ -892,9 +892,11 @@ class PortSpeedDetector:
     def get_port_speeds_mikrotik(ssh: SSHConnection, ports: List[str]) -> Dict[str, str]:
         """Get port speeds for MikroTik interfaces"""
         speeds = {}
+        debug_info = []
 
         # Clean port names - remove suffixes like ",bridge", ",trunk", ",OfficeAruba"
         port_mapping = PortSpeedDetector._clean_port_names(ports)
+        debug_info.append(f"Port mapping: {port_mapping}")
 
         # Use ethernet print command for speed info
         stdout, stderr, exit_code = ssh.execute_command('/interface ethernet print detail without-paging')
@@ -913,12 +915,16 @@ class PortSpeedDetector:
                     if current_interface and current_speed:
                         # Check if this interface is in our cleaned port list
                         if current_interface in port_mapping:
+                            debug_info.append(f"Saving {current_interface} = {current_speed} to ports: {port_mapping[current_interface]}")
                             # Apply to all original ports that map to this clean name
                             for original_port in port_mapping[current_interface]:
                                 speeds[original_port] = current_speed
+                        else:
+                            debug_info.append(f"Skipping {current_interface} (not in port_mapping)")
 
                     current_interface = name_match.group(1)
                     current_speed = None
+                    debug_info.append(f"Found interface: {current_interface}")
 
                 # Match speed= field (actual negotiated speed)
                 # Examples: "speed=10G-baseCR", "speed=40G-baseCR4", "speed=2.5G-baseT"
@@ -928,6 +934,7 @@ class PortSpeedDetector:
                         speed_value = speed_match.group(1).upper()
                         # Normalize: "10G" stays "10G", "2.5G" stays "2.5G"
                         current_speed = speed_value
+                        debug_info.append(f"  Found speed for {current_interface}: {current_speed}")
                         continue
 
                     # If no speed= field, check advertise= for max capability (auto-negotiation)
@@ -951,24 +958,32 @@ class PortSpeedDetector:
 
                             highest = max(advertise_speeds, key=speed_value)
                             current_speed = f"{highest} (adv)"
+                            debug_info.append(f"  Found advertised speed for {current_interface}: {current_speed}")
 
             # Save last interface
             if current_interface and current_speed:
                 if current_interface in port_mapping:
+                    debug_info.append(f"Saving last interface {current_interface} = {current_speed} to ports: {port_mapping[current_interface]}")
                     # Apply to all original ports that map to this clean name
                     for original_port in port_mapping[current_interface]:
                         speeds[original_port] = current_speed
+                else:
+                    debug_info.append(f"Skipping last interface {current_interface} (not in port_mapping)")
 
         # Fill in unknowns for originally requested ports
         for port in ports:
             if port not in speeds:
                 speeds[port] = "Unknown"
 
-        # Log the detection results
+        # Log the detection results with debug info
+        log_output = stdout if exit_code == 0 else "(command failed)"
+        if debug_info:
+            log_output = "DEBUG INFO:\n" + "\n".join(debug_info) + "\n\n" + "RAW OUTPUT:\n" + log_output
+
         PortSpeedDetector._log_speed_detection(
             ssh.device.hostname, "MikroTik",
             "/interface ethernet print detail without-paging",
-            stdout if exit_code == 0 else "(command failed)",
+            log_output,
             ports, speeds
         )
 
