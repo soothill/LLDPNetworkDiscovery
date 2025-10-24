@@ -33,8 +33,9 @@ except (ImportError, AttributeError) as e:
     # The package may be installed but incompatible/broken
     SNMP_AVAILABLE = False
     print(f"Warning: pysnmp not available or incompatible version.")
-    print(f"Try: pip uninstall pysnmp pysnmp-lextudio")
-    print(f"Then: pip install pysnmp==4.4.12")
+    print(f"Try: pip uninstall pysnmp pysnmp-lextudio pyasn1")
+    print(f"Then: pip install pysnmp==4.4.12 pyasn1>=0.4.8 pycryptodomex>=3.9.7")
+    print(f"Or simply: pip install -r requirements.txt")
     print(f"Error: {e}")
 except Exception as e:
     SNMP_AVAILABLE = False
@@ -2227,8 +2228,9 @@ class LLDPDiscovery:
         if device.use_snmp:
             if not SNMP_AVAILABLE:
                 self.logger.error(f"✗ {device.hostname} - SNMP requested but pysnmp not available or incompatible")
-                self.logger.error("Try: pip uninstall pysnmp pysnmp-lextudio")
-                self.logger.error("Then: pip install pysnmp==4.4.12")
+                self.logger.error("Try: pip uninstall pysnmp pysnmp-lextudio pyasn1")
+                self.logger.error("Then: pip install pysnmp==4.4.12 pyasn1>=0.4.8 pycryptodomex>=3.9.7")
+                self.logger.error("Or simply: pip install -r requirements.txt")
                 return False
 
             self.logger.info(f"Testing SNMP connectivity to {device.hostname}...")
