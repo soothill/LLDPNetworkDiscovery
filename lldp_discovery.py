@@ -1510,12 +1510,21 @@ class LLDPParser:
         logger = logging.getLogger(__name__)
 
         # Save raw LLDP output for debugging
+        print(f"DEBUG: Linux parser called for {hostname}, output length: {len(output)} chars")
         try:
-            with open(f"linux_lldp_debug_{hostname}.txt", 'w') as f:
+            debug_filename = f"linux_lldp_debug_{hostname}.txt"
+            with open(debug_filename, 'w') as f:
                 f.write(output)
-            logger.debug(f"Saved Linux LLDP output to linux_lldp_debug_{hostname}.txt")
-        except:
-            pass
+            logger.info(f"Saved Linux LLDP output to {debug_filename}")
+            print(f"DEBUG: Saved Linux LLDP output to {debug_filename}")
+        except Exception as e:
+            logger.error(f"Failed to save Linux LLDP debug file: {e}")
+            print(f"ERROR: Failed to save Linux LLDP debug file: {e}")
+
+        if not output or len(output) < 10:
+            logger.warning(f"Linux: Empty or very short LLDP output received from {hostname}")
+            print(f"WARNING: Empty or very short LLDP output from {hostname}")
+            return neighbors
 
         # Parse lldpctl output
         current_interface = None
@@ -1665,13 +1674,23 @@ class LLDPParser:
         import logging
         logger = logging.getLogger(__name__)
 
+        print(f"DEBUG: Arista parser called for {hostname}, output length: {len(output)} chars")
+
         # Save raw LLDP output for debugging
         try:
-            with open(f"arista_lldp_debug_{hostname}.txt", 'w') as f:
+            debug_filename = f"arista_lldp_debug_{hostname}.txt"
+            with open(debug_filename, 'w') as f:
                 f.write(output)
-            logger.debug(f"Saved Arista LLDP output to arista_lldp_debug_{hostname}.txt")
-        except:
-            pass
+            logger.info(f"Saved Arista LLDP output to {debug_filename}")
+            print(f"DEBUG: Saved Arista LLDP output to {debug_filename}")
+        except Exception as e:
+            logger.error(f"Failed to save Arista LLDP debug file: {e}")
+            print(f"ERROR: Failed to save Arista LLDP debug file: {e}")
+
+        if not output or len(output) < 10:
+            logger.warning(f"Arista: Empty or very short LLDP output received from {hostname}")
+            print(f"WARNING: Empty or very short LLDP output from {hostname}")
+            return neighbors
 
         for line in lines:
             line = line.strip()
