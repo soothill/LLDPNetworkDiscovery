@@ -19,8 +19,13 @@ import logging
 from math import cos, sin
 from datetime import datetime
 
-# For SNMP support
+# For SNMP support - try both pysnmp-lextudio (v5+) and legacy pysnmp (v4)
 SNMP_AVAILABLE = False
+CommunityData = UdpTransportTarget = ContextData = None
+ObjectType = ObjectIdentity = SnmpEngine = None
+getCmd = nextCmd = None
+
+# Try pysnmp-lextudio v5+ first (maintained fork for Python 3.8+)
 try:
     from pysnmp.hlapi import (
         CommunityData, UdpTransportTarget, ContextData,
@@ -28,15 +33,20 @@ try:
         getCmd, nextCmd
     )
     SNMP_AVAILABLE = True
-except (ImportError, AttributeError) as e:
-    # pysnmp not installed or wrong version
-    # The package may be installed but incompatible/broken
+    # Check if it's lextudio or legacy by checking version
+    import pysnmp
+    if hasattr(pysnmp, '__version__'):
+        version = pysnmp.__version__
+        print(f"Using pysnmp version {version}")
+    else:
+        print("Using pysnmp (version unknown)")
+except (ImportError, AttributeError, ModuleNotFoundError) as e:
     SNMP_AVAILABLE = False
     print(f"Warning: pysnmp not available or incompatible version.")
-    print(f"Try: pip uninstall pysnmp pysnmp-lextudio pyasn1")
-    print(f"Then: pip install pysnmp==4.4.12 pyasn1>=0.4.8 pycryptodomex>=3.9.7")
-    print(f"Or simply: pip install -r requirements.txt")
-    print(f"Error: {e}")
+    print(f"Try: pip uninstall pysnmp pysnmp-lextudio pyasn1 -y")
+    print(f"Then: pip install -r requirements.txt")
+    print(f"")
+    print(f"Detailed error: {e}")
 except Exception as e:
     SNMP_AVAILABLE = False
     print(f"Warning: pysnmp import failed: {e}")
@@ -2228,9 +2238,8 @@ class LLDPDiscovery:
         if device.use_snmp:
             if not SNMP_AVAILABLE:
                 self.logger.error(f"✗ {device.hostname} - SNMP requested but pysnmp not available or incompatible")
-                self.logger.error("Try: pip uninstall pysnmp pysnmp-lextudio pyasn1")
-                self.logger.error("Then: pip install pysnmp==4.4.12 pyasn1>=0.4.8 pycryptodomex>=3.9.7")
-                self.logger.error("Or simply: pip install -r requirements.txt")
+                self.logger.error("Try: pip uninstall pysnmp pysnmp-lextudio pyasn1 -y")
+                self.logger.error("Then: pip install -r requirements.txt")
                 return False
 
             self.logger.info(f"Testing SNMP connectivity to {device.hostname}...")

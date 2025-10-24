@@ -1,6 +1,6 @@
 paramiko>=3.0.0
 networkx>=3.0
 matplotlib>=3.5.0
-pysnmp==4.4.12
+# SNMP support - use pysnmp-lextudio (maintained fork) for Python 3.8+
+pysnmp-lextudio>=5.0.0
 pyasn1>=0.4.8
-pycryptodomex>=3.9.7
