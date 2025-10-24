@@ -3058,6 +3058,11 @@ class LLDPDiscovery:
             mid_x = (x1 + x2) / 2
             mid_y = (y1 + y2) / 2
 
+            # Skip if devices are at the same position (length = 0)
+            if length < 0.1:
+                self.logger.warning(f"Devices {device1} and {device2} are at the same position, skipping link visualization")
+                continue
+
             # Draw each link line
             for idx, conn in enumerate(conns):
                 speed_class = conn['speed_class']
