@@ -815,8 +815,12 @@ class PortSpeedDetector:
             log_filename = "speed_detection_debug.log"
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+            # Version identifier for debugging
+            LOG_VERSION = "v2.0-896ae56"
+
             with open(log_filename, 'a') as f:
                 f.write("\n" + "=" * 100 + "\n")
+                f.write(f"LOG VERSION: {LOG_VERSION}\n")
                 f.write(f"TIMESTAMP: {timestamp}\n")
                 f.write(f"DEVICE: {device_hostname} ({device_type})\n")
                 f.write(f"COMMAND: {command}\n")
@@ -833,6 +837,7 @@ class PortSpeedDetector:
                 f.write("=" * 100 + "\n\n")
         except Exception as e:
             # Don't fail if logging fails
+            print(f"WARNING: Failed to write debug log: {e}")
             pass
 
     @staticmethod
