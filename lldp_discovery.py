@@ -1619,18 +1619,34 @@ class LLDPParser:
         lines = output.split('\n')
         current_neighbor = {}
 
+        # Debug: Write raw output to file for inspection
+        import logging
+        logger = logging.getLogger(__name__)
+
+        # Save raw LLDP output for debugging
+        try:
+            with open(f"arista_lldp_debug_{hostname}.txt", 'w') as f:
+                f.write(output)
+            logger.debug(f"Saved Arista LLDP output to arista_lldp_debug_{hostname}.txt")
+        except:
+            pass
+
         for line in lines:
             line = line.strip()
 
             if line.startswith('Interface'):
                 if current_neighbor and 'local_port' in current_neighbor:
-                    neighbors.append(LLDPNeighbor(
-                        local_device=hostname,
-                        local_port=current_neighbor.get('local_port', ''),
-                        remote_device=current_neighbor.get('remote_device', ''),
-                        remote_port=current_neighbor.get('remote_port', ''),
-                        remote_description=current_neighbor.get('remote_desc')
-                    ))
+                    # Only add neighbor if we have both device and port info
+                    if current_neighbor.get('remote_device') and current_neighbor.get('remote_port'):
+                        neighbors.append(LLDPNeighbor(
+                            local_device=hostname,
+                            local_port=current_neighbor.get('local_port', ''),
+                            remote_device=current_neighbor.get('remote_device', ''),
+                            remote_port=current_neighbor.get('remote_port', ''),
+                            remote_description=current_neighbor.get('remote_desc')
+                        ))
+                    else:
+                        logger.debug(f"Skipping incomplete Arista neighbor: {current_neighbor}")
                 current_neighbor = {}
                 # Parse: "Interface Ethernet1 detected 1 LLDP neighbors"
                 match = re.search(r'Interface\s+(\S+)', line)
@@ -1640,28 +1656,40 @@ class LLDPParser:
             elif 'System Name:' in line or 'Neighbor Device ID:' in line:
                 parts = line.split(':', 1)
                 if len(parts) == 2:
-                    current_neighbor['remote_device'] = parts[1].strip().strip('"')
+                    device_name = parts[1].strip().strip('"')
+                    # Only set if non-empty
+                    if device_name:
+                        current_neighbor['remote_device'] = device_name
 
             elif 'Port ID:' in line or 'Neighbor Port ID:' in line:
                 parts = line.split(':', 1)
                 if len(parts) == 2:
-                    current_neighbor['remote_port'] = parts[1].strip().strip('"')
+                    port_id = parts[1].strip().strip('"')
+                    # Only set if non-empty
+                    if port_id:
+                        current_neighbor['remote_port'] = port_id
 
             elif 'Port Description:' in line:
                 parts = line.split(':', 1)
                 if len(parts) == 2:
-                    current_neighbor['remote_desc'] = parts[1].strip().strip('"')
+                    port_desc = parts[1].strip().strip('"')
+                    if port_desc:
+                        current_neighbor['remote_desc'] = port_desc
 
-        # Add last neighbor
+        # Add last neighbor (only if complete)
         if current_neighbor and 'local_port' in current_neighbor:
-            neighbors.append(LLDPNeighbor(
-                local_device=hostname,
-                local_port=current_neighbor.get('local_port', ''),
-                remote_device=current_neighbor.get('remote_device', ''),
-                remote_port=current_neighbor.get('remote_port', ''),
-                remote_description=current_neighbor.get('remote_desc')
-            ))
+            if current_neighbor.get('remote_device') and current_neighbor.get('remote_port'):
+                neighbors.append(LLDPNeighbor(
+                    local_device=hostname,
+                    local_port=current_neighbor.get('local_port', ''),
+                    remote_device=current_neighbor.get('remote_device', ''),
+                    remote_port=current_neighbor.get('remote_port', ''),
+                    remote_description=current_neighbor.get('remote_desc')
+                ))
+            else:
+                logger.debug(f"Skipping incomplete Arista neighbor (last): {current_neighbor}")
 
+        logger.info(f"Arista: Parsed {len(neighbors)} complete LLDP neighbors from {hostname}")
         return neighbors
 
     @staticmethod
