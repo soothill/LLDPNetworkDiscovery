@@ -85,13 +85,17 @@ class SSHConnection:
             # Get the default transport to modify security options
             transport = self.client.get_transport() if hasattr(self.client, 'get_transport') else None
 
+            # Determine authentication strategy
+            # If no explicit key or password, allow agent and default keys
+            use_agent_keys = not self.device.ssh_key and not self.device.password
+
             connect_params = {
                 'hostname': self.device.ip_address,
                 'username': self.device.username,
                 'port': self.device.port,
                 'timeout': self.timeout,
-                'look_for_keys': False,
-                'allow_agent': False,
+                'look_for_keys': use_agent_keys,  # Look for default keys if no explicit auth
+                'allow_agent': use_agent_keys,     # Use SSH agent if no explicit auth
                 'disabled_algorithms': {
                     # Don't disable anything - allow all algorithms including legacy ones
                 }
@@ -110,16 +114,23 @@ class SSHConnection:
                         answers.append('')
                 return answers
 
+            # Configure authentication method
             if self.device.ssh_key:
+                # Explicit SSH key provided
                 connect_params['key_filename'] = self.device.ssh_key
-                self.logger.debug(f"Using SSH key authentication: {self.device.ssh_key}")
+                connect_params['look_for_keys'] = False
+                connect_params['allow_agent'] = False
+                self.logger.debug(f"Using explicit SSH key authentication: {self.device.ssh_key}")
             elif self.device.password:
-                # Provide password parameter - paramiko will try both password and keyboard-interactive
+                # Password provided
                 connect_params['password'] = self.device.password
-                self.logger.debug(f"Using password authentication with keyboard-interactive support (password length: {len(self.device.password)})")
+                connect_params['look_for_keys'] = False
+                connect_params['allow_agent'] = False
+                self.logger.debug(f"Using password authentication (length: {len(self.device.password)})")
             else:
-                self.logger.error(f"No authentication method provided for {self.device.hostname}")
-                return False
+                # No explicit auth - try agent and default keys
+                self.logger.debug(f"No explicit auth provided - trying SSH agent and default keys (~/.ssh/id_*)")
+                self.logger.debug(f"  look_for_keys={use_agent_keys}, allow_agent={use_agent_keys}")
 
             # Suppress paramiko's internal logging temporarily to avoid verbose errors
             paramiko_logger = logging.getLogger("paramiko")
