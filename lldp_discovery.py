@@ -19,37 +19,49 @@ import logging
 from math import cos, sin
 from datetime import datetime
 
-# For SNMP support - try both pysnmp-lextudio (v5+) and legacy pysnmp (v4)
+# For SNMP support - try modern pysnmp (v6+), then fall back to v4
 SNMP_AVAILABLE = False
 CommunityData = UdpTransportTarget = ContextData = None
 ObjectType = ObjectIdentity = SnmpEngine = None
 getCmd = nextCmd = None
 
-# Try pysnmp-lextudio v5+ first (maintained fork for Python 3.8+)
+# Try modern pysnmp v6+ with sync API
 try:
-    from pysnmp.hlapi import (
+    from pysnmp.hlapi.v3arch.sync import (
         CommunityData, UdpTransportTarget, ContextData,
         ObjectType, ObjectIdentity, SnmpEngine,
         getCmd, nextCmd
     )
     SNMP_AVAILABLE = True
-    # Check if it's lextudio or legacy by checking version
     import pysnmp
-    if hasattr(pysnmp, '__version__'):
-        version = pysnmp.__version__
-        print(f"Using pysnmp version {version}")
-    else:
-        print("Using pysnmp (version unknown)")
-except (ImportError, AttributeError, ModuleNotFoundError) as e:
-    SNMP_AVAILABLE = False
-    print(f"Warning: pysnmp not available or incompatible version.")
-    print(f"Try: pip uninstall pysnmp pysnmp-lextudio pyasn1 -y")
-    print(f"Then: pip install -r requirements.txt")
-    print(f"")
-    print(f"Detailed error: {e}")
+    version = getattr(pysnmp, '__version__', 'unknown')
+    print(f"Using pysnmp v6+ sync API (version {version})")
+except (ImportError, AttributeError, ModuleNotFoundError):
+    # Try legacy pysnmp v4/v5 with classic API
+    try:
+        from pysnmp.hlapi import (
+            CommunityData, UdpTransportTarget, ContextData,
+            ObjectType, ObjectIdentity, SnmpEngine,
+            getCmd, nextCmd
+        )
+        SNMP_AVAILABLE = True
+        import pysnmp
+        version = getattr(pysnmp, '__version__', 'unknown')
+        print(f"Using pysnmp v4/v5 classic API (version {version})")
+    except (ImportError, AttributeError, ModuleNotFoundError) as e:
+        SNMP_AVAILABLE = False
+        print(f"Warning: pysnmp not available or incompatible version.")
+        print(f"Try: pip uninstall pysnmp pysnmp-lextudio pyasn1 -y")
+        print(f"Then: pip install pysnmp>=6.0.0")
+        print(f"Or: pip install -r requirements.txt")
+        print(f"")
+        print(f"Detailed error: {e}")
+    except Exception as e:
+        SNMP_AVAILABLE = False
+        print(f"Warning: pysnmp v4/v5 import failed: {e}")
 except Exception as e:
     SNMP_AVAILABLE = False
-    print(f"Warning: pysnmp import failed: {e}")
+    print(f"Warning: pysnmp v6+ import failed: {e}")
 
 # For graphical output
 try:
