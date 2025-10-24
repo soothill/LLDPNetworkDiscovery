@@ -864,7 +864,7 @@ class PortSpeedDetector:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
             # Version identifier for debugging
-            LOG_VERSION = "v2.2-arista-fix"
+            LOG_VERSION = "v2.3-arista-port-matching"
 
             # On first write of the run, clear the log file
             write_mode = 'w' if not PortSpeedDetector._log_initialized else 'a'
@@ -1072,49 +1072,73 @@ class PortSpeedDetector:
     def get_port_speeds_arista(ssh: SSHConnection, ports: List[str]) -> Dict[str, str]:
         """Get port speeds for Arista EOS interfaces"""
         speeds = {}
+        debug_info = []
 
         # Clean port names - remove suffixes
         port_mapping = PortSpeedDetector._clean_port_names(ports)
+
+        # Normalize Arista port names: "Ethernet1/1" -> "Et1/1"
+        # Arista uses abbreviated names in output
+        normalized_mapping = {}
+        for clean_port, original_ports in port_mapping.items():
+            # Convert "Ethernet" to "Et", "Management" to "Ma"
+            normalized = clean_port.replace('Ethernet', 'Et').replace('Management', 'Ma')
+            normalized_mapping[normalized] = original_ports
+
+        debug_info.append(f"Port mapping after normalization: {normalized_mapping}")
 
         # Use shell command for Arista devices (requires enable mode)
         stdout, stderr, exit_code = ssh.execute_shell_command('show interfaces status', enable_mode=True)
 
         if exit_code == 0:
             for line in stdout.split('\n'):
-                # Parse output like: "Et1    connected    1        full    1G     1000baseT"
+                # Parse output like: "Et1/1    connected    1        full    10G     Not Present"
                 # Format: Port       Name    Status       Vlan       Duplex  Speed Type
                 parts = line.split()
-                if len(parts) >= 2 and not line.startswith('Port'):
+                if len(parts) >= 6 and not line.startswith('Port'):
                     interface = parts[0]
-                    # Match any port in our cleaned list
-                    for clean_port, original_ports in port_mapping.items():
-                        if clean_port in interface or interface in clean_port:
-                            # Look for speed pattern in the line (e.g., "1G", "10G", "100M")
-                            speed_match = re.search(r'\b(\d+(?:\.\d+)?[GM](?:b(?:ps)?)?)\b', line, re.IGNORECASE)
-                            detected_speed = None
-                            if speed_match:
-                                detected_speed = speed_match.group(1).upper()
-                            elif 'connected' in line.lower():
-                                # If connected but no speed found, mark as Link Up
-                                detected_speed = "Link Up"
-                            else:
-                                detected_speed = "Unknown"
 
-                            # Apply to all original ports that map to this clean name
-                            for original_port in original_ports:
-                                speeds[original_port] = detected_speed
-                            break
+                    # Match against normalized port names
+                    if interface in normalized_mapping:
+                        # Look for speed pattern in the line (e.g., "1G", "10G", "100M", "40G")
+                        speed_match = re.search(r'\b(\d+(?:\.\d+)?[GM])\b', line, re.IGNORECASE)
+                        detected_speed = None
+
+                        if speed_match:
+                            detected_speed = speed_match.group(1).upper()
+                            debug_info.append(f"Found speed for {interface}: {detected_speed}")
+                        elif 'connected' in line.lower():
+                            # If connected but no speed found, mark as Link Up
+                            detected_speed = "Link Up"
+                            debug_info.append(f"Port {interface} is connected but no speed found")
+                        elif 'notconnect' in line.lower():
+                            detected_speed = "Down"
+                            debug_info.append(f"Port {interface} is not connected")
+                        else:
+                            detected_speed = "Unknown"
+                            debug_info.append(f"Port {interface} status unknown")
+
+                        # Apply to all original ports that map to this normalized name
+                        for original_port in normalized_mapping[interface]:
+                            speeds[original_port] = detected_speed
+                            debug_info.append(f"  Mapped {interface} -> {original_port} = {detected_speed}")
 
         # Fill in unknowns
         for port in ports:
             if port not in speeds:
                 speeds[port] = "Unknown"
+                debug_info.append(f"Port {port} not found in output, marked as Unknown")
 
-        # Log the detection results
+        # Log the detection results with debug info
+        log_output = ""
+        if debug_info:
+            log_output = "DEBUG INFO:\n" + "-" * 100 + "\n" + "\n".join(debug_info) + "\n" + "-" * 100 + "\n\n"
+        log_output += stdout if exit_code == 0 else "(command failed)"
+
         PortSpeedDetector._log_speed_detection(
             ssh.device.hostname, "Arista",
             "show interfaces status",
-            stdout if exit_code == 0 else "(command failed)",
+            log_output,
             ports, speeds
         )
 
