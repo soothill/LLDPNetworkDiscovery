@@ -2041,7 +2041,8 @@ class SNMPLLDPCollector:
             self.logger.error(f"SNMP version {self.device.snmp_version} not yet supported")
             return neighbors
 
-        target = UdpTransportTarget((self.device.ip_address, self.device.snmp_port), timeout=5, retries=2)
+        # v3arch asyncio API: UdpTransportTarget takes address tuple only (no timeout/retries params)
+        target = UdpTransportTarget((self.device.ip_address, self.device.snmp_port))
 
         try:
             # First, get local port descriptions to map port IDs to interface names
@@ -2289,11 +2290,13 @@ class LLDPDiscovery:
 
                 # Try a simple SNMP query to verify connectivity
                 community = CommunityData(device.snmp_community or 'public')
-                target = UdpTransportTarget((device.ip_address, device.snmp_port), timeout=5, retries=1)
+                # v3arch asyncio API: UdpTransportTarget takes address tuple only
+                target = UdpTransportTarget((device.ip_address, device.snmp_port))
 
                 # Query sysName (1.3.6.1.2.1.1.5.0) as a simple connectivity test
+                # Note: getCmd in asyncio API returns an async iterator, use next() to get first result
                 errorIndication, errorStatus, errorIndex, varBinds = next(
-                    getCmd(SnmpEngine(), community, target, ContextData(),
+                    getCmd(SnmpEngine(), community, target, ContextData() if ContextData else None,
                            ObjectType(ObjectIdentity('1.3.6.1.2.1.1.5.0')))
                 )
 
