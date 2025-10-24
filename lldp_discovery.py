@@ -96,10 +96,19 @@ class SSHConnection:
                 self.logger.error(f"No authentication method provided for {self.device.hostname}")
                 return False
 
+            # Suppress paramiko's internal logging temporarily to avoid verbose errors
+            paramiko_logger = logging.getLogger("paramiko")
+            original_level = paramiko_logger.level
+            paramiko_logger.setLevel(logging.CRITICAL)
+
             # First attempt with legacy algorithm support
             try:
                 self.client.connect(**connect_params)
+                # Restore logging level on success
+                paramiko_logger.setLevel(original_level)
             except paramiko.SSHException as e:
+                # Restore logging level
+                paramiko_logger.setLevel(original_level)
                 if 'no acceptable host key' in str(e).lower() or 'incompatible' in str(e).lower():
                     self.logger.debug(f"Retrying {self.device.hostname} with legacy SSH algorithms enabled...")
 
@@ -117,6 +126,9 @@ class SSHConnection:
                     original_preferred_keys = transport_module.Transport._preferred_keys
                     original_preferred_kex = transport_module.Transport._preferred_kex
                     original_key_info = transport_module.Transport._key_info.copy()
+
+                    # Suppress paramiko logging for retry attempt
+                    paramiko_logger.setLevel(logging.CRITICAL)
 
                     try:
                         # Re-enable ssh-rsa in _key_info if it's missing (disabled in paramiko 2.9+)
@@ -182,19 +194,89 @@ class SSHConnection:
                         transport_module.Transport._preferred_keys = original_preferred_keys
                         transport_module.Transport._preferred_kex = original_preferred_kex
                         transport_module.Transport._key_info = original_key_info
+                        # Restore paramiko logging level
+                        paramiko_logger.setLevel(original_level)
                 else:
                     raise
             self.logger.debug(f"Successfully connected to {self.device.hostname} ({self.device.ip_address})")
             return True
 
         except paramiko.AuthenticationException:
-            self.logger.error(f"Authentication failed for {self.device.hostname}")
+            self.logger.error("")
+            self.logger.error("=" * 70)
+            self.logger.error(f"✗ AUTHENTICATION FAILED - {self.device.hostname}")
+            self.logger.error("=" * 70)
+            self.logger.error(f"Device: {self.device.hostname} ({self.device.ip_address})")
+            self.logger.error(f"Username: {self.device.username}")
+            self.logger.error("")
+            self.logger.error("Possible causes:")
+            self.logger.error("  1. Incorrect password")
+            self.logger.error("  2. Invalid SSH key")
+            self.logger.error("  3. User account disabled or locked")
+            self.logger.error("  4. SSH authentication method not allowed on device")
+            self.logger.error("")
+            self.logger.error("Troubleshooting:")
+            self.logger.error("  • Verify credentials in devices.json")
+            self.logger.error("  • Check SSH key permissions: chmod 600 <keyfile>")
+            self.logger.error("  • Test manually: ssh {0}@{1}".format(self.device.username, self.device.ip_address))
+            self.logger.error("=" * 70)
+            self.logger.error("")
             return False
         except paramiko.SSHException as e:
-            self.logger.error(f"SSH error connecting to {self.device.hostname}: {e}")
+            if 'no acceptable host key' in str(e).lower() or 'incompatible' in str(e).lower():
+                # This shouldn't happen as we already handled it above, but just in case
+                self.logger.error("")
+                self.logger.error("=" * 70)
+                self.logger.error(f"✗ SSH COMPATIBILITY ERROR - {self.device.hostname}")
+                self.logger.error("=" * 70)
+                self.logger.error(f"Device: {self.device.hostname} ({self.device.ip_address})")
+                self.logger.error(f"Error: Incompatible SSH algorithms")
+                self.logger.error("")
+                self.logger.error("This device uses legacy SSH algorithms that are not supported.")
+                self.logger.error("")
+                self.logger.error("Solutions:")
+                self.logger.error("  1. Update device firmware to support modern SSH algorithms")
+                self.logger.error("  2. Install older paramiko version: pip install paramiko==2.8.1")
+                self.logger.error("  3. Configure SSH client to allow legacy algorithms")
+                self.logger.error("")
+                self.logger.error("For HP Aruba switches, ensure firmware is up to date:")
+                self.logger.error("  • KB.16.10 or newer recommended")
+                self.logger.error("  • WC.16.11 or newer for Aruba OS-CX")
+                self.logger.error("")
+                self.logger.error("Manual test command:")
+                self.logger.error(f"  ssh -oHostKeyAlgorithms=+ssh-rsa,ssh-dss -oKexAlgorithms=+diffie-hellman-group1-sha1 {self.device.username}@{self.device.ip_address}")
+                self.logger.error("=" * 70)
+                self.logger.error("")
+            else:
+                self.logger.error("")
+                self.logger.error("=" * 70)
+                self.logger.error(f"✗ SSH CONNECTION ERROR - {self.device.hostname}")
+                self.logger.error("=" * 70)
+                self.logger.error(f"Device: {self.device.hostname} ({self.device.ip_address})")
+                self.logger.error(f"Error: {e}")
+                self.logger.error("")
+                self.logger.error("Troubleshooting:")
+                self.logger.error("  • Verify device is reachable: ping {0}".format(self.device.ip_address))
+                self.logger.error("  • Check SSH is enabled on device")
+                self.logger.error("  • Verify SSH port (default: 22)")
+                self.logger.error("  • Check firewall rules")
+                self.logger.error("=" * 70)
+                self.logger.error("")
             return False
         except Exception as e:
-            self.logger.error(f"Error connecting to {self.device.hostname}: {e}")
+            self.logger.error("")
+            self.logger.error("=" * 70)
+            self.logger.error(f"✗ CONNECTION ERROR - {self.device.hostname}")
+            self.logger.error("=" * 70)
+            self.logger.error(f"Device: {self.device.hostname} ({self.device.ip_address})")
+            self.logger.error(f"Error: {e}")
+            self.logger.error("")
+            self.logger.error("Please check:")
+            self.logger.error("  • Network connectivity to device")
+            self.logger.error("  • Device configuration in devices.json")
+            self.logger.error("  • Device is powered on and accessible")
+            self.logger.error("=" * 70)
+            self.logger.error("")
             return False
 
     def enter_enable_mode(self) -> bool:
