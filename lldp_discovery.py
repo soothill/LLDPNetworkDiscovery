@@ -2066,19 +2066,33 @@ class SNMPLLDPCollector:
     def _parse_snmp_response(self, response: bytes) -> Optional[Dict[str, any]]:
         """Parse SNMP response packet"""
         try:
-            message, _ = decoder.decode(response, asn1Spec=univ.Sequence())
+            self.logger.debug(f"Parsing SNMP response: {response.hex()[:100]}...")
+
+            # Decode without strict schema - let pyasn1 figure it out
+            message, remainder = decoder.decode(response)
+
+            self.logger.debug(f"Decoded message type: {type(message)}")
+            self.logger.debug(f"Message length: {len(message)}")
+            self.logger.debug(f"Remainder: {len(remainder)} bytes")
 
             # Extract version, community, PDU
             version = int(message[0])
-            community = str(message[1])
+            community = bytes(message[1]).decode('utf-8', errors='ignore')
             pdu = message[2]
+
+            self.logger.debug(f"SNMP version: {version}, community: {community}")
+            self.logger.debug(f"PDU type: {type(pdu)}, tag: {pdu.tagSet}")
 
             request_id = int(pdu[0])
             error_status = int(pdu[1])
             error_index = int(pdu[2])
             varbinds = pdu[3]
 
+            self.logger.debug(f"Request ID: {request_id}, Error status: {error_status}, Error index: {error_index}")
+            self.logger.debug(f"Varbinds count: {len(varbinds)}")
+
             if error_status != 0:
+                self.logger.warning(f"SNMP error status: {error_status}")
                 return None
 
             # Extract first varbind
@@ -2093,11 +2107,14 @@ class SNMPLLDPCollector:
                 else:
                     value_str = str(value)
 
+                self.logger.debug(f"Parsed OID: {oid}, Value: {value_str}")
                 return {'oid': oid, 'value': value_str}
 
             return None
         except Exception as e:
-            self.logger.debug(f"SNMP parse error: {e}")
+            self.logger.error(f"SNMP parse error: {e}")
+            import traceback
+            traceback.print_exc()
             return None
 
     def snmp_get(self, oid: str) -> Optional[str]:
