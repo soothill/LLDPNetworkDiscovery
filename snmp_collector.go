@@ -15,6 +15,7 @@ import (
 type LLDPNeighbor struct {
 	LocalDevice        string `json:"local_device"`
 	LocalPort          string `json:"local_port"`
+	LocalPortSpeed     string `json:"local_port_speed,omitempty"`
 	RemoteDevice       string `json:"remote_device"`
 	RemotePort         string `json:"remote_port"`
 	RemoteDescription  string `json:"remote_description"`
@@ -29,6 +30,8 @@ const (
 	LLDP_LOC_PORT_DESC   = "1.0.8802.1.1.2.1.3.7.1.4"
 	IF_NAME              = "1.3.6.1.2.1.31.1.1.1.1"
 	IF_DESCR             = "1.3.6.1.2.1.2.2.1.2"
+	IF_SPEED             = "1.3.6.1.2.1.2.2.1.5"      // ifSpeed (bits/sec)
+	IF_HIGH_SPEED        = "1.3.6.1.2.1.31.1.1.1.15"  // ifHighSpeed (Mbps)
 	SYS_NAME_OID         = "1.3.6.1.2.1.1.5.0"
 )
 
@@ -109,6 +112,9 @@ func collectLLDPNeighbors(snmp *gosnmp.GoSNMP, deviceName string) ([]LLDPNeighbo
 		return nil, fmt.Errorf("failed to get local port map: %w", err)
 	}
 
+	// Get interface speeds (port number -> speed string)
+	speedMap := getInterfaceSpeeds(snmp)
+
 	// Walk remote system names
 	remoteSystems, err := snmpWalk(snmp, LLDP_REM_SYS_NAME)
 	if err != nil {
@@ -149,6 +155,9 @@ func collectLLDPNeighbors(snmp *gosnmp.GoSNMP, deviceName string) ([]LLDPNeighbo
 			localPort = fmt.Sprintf("Port%s", localPortNum)
 		}
 
+		// Get port speed
+		portSpeed := speedMap[localPortNum]
+
 		// Get remote port ID
 		remotePortOID := fmt.Sprintf("%s.%s", LLDP_REM_PORT_ID, indexSuffix)
 		remotePort := remotePorts[remotePortOID]
@@ -160,6 +169,7 @@ func collectLLDPNeighbors(snmp *gosnmp.GoSNMP, deviceName string) ([]LLDPNeighbo
 		neighbor := LLDPNeighbor{
 			LocalDevice:       deviceName,
 			LocalPort:         localPort,
+			LocalPortSpeed:    portSpeed,
 			RemoteDevice:      strings.TrimSpace(remoteName),
 			RemotePort:        strings.TrimSpace(remotePort),
 			RemoteDescription: strings.TrimSpace(remoteDesc),
@@ -169,6 +179,65 @@ func collectLLDPNeighbors(snmp *gosnmp.GoSNMP, deviceName string) ([]LLDPNeighbo
 	}
 
 	return neighbors, nil
+}
+
+func getInterfaceSpeeds(snmp *gosnmp.GoSNMP) map[string]string {
+	speedMap := make(map[string]string)
+
+	// Try ifHighSpeed first (returns speed in Mbps, more accurate for high-speed interfaces)
+	highSpeeds, err := snmpWalk(snmp, IF_HIGH_SPEED)
+	if err == nil && len(highSpeeds) > 0 {
+		for oid, speedStr := range highSpeeds {
+			parts := strings.Split(oid, ".")
+			portNum := parts[len(parts)-1]
+
+			// ifHighSpeed is in Mbps, convert to human-readable format
+			speedMbps := 0
+			fmt.Sscanf(speedStr, "%d", &speedMbps)
+
+			if speedMbps == 0 {
+				continue // Skip interfaces with 0 speed
+			} else if speedMbps >= 1000 {
+				// Convert to Gbps
+				speedGbps := float64(speedMbps) / 1000.0
+				speedMap[portNum] = fmt.Sprintf("%.1fG", speedGbps)
+			} else {
+				speedMap[portNum] = fmt.Sprintf("%dM", speedMbps)
+			}
+		}
+		return speedMap
+	}
+
+	// Fallback to ifSpeed (returns speed in bits/sec, less accurate for >4Gbps)
+	speeds, err := snmpWalk(snmp, IF_SPEED)
+	if err == nil && len(speeds) > 0 {
+		for oid, speedStr := range speeds {
+			parts := strings.Split(oid, ".")
+			portNum := parts[len(parts)-1]
+
+			// ifSpeed is in bits/sec
+			speedBps := uint64(0)
+			fmt.Sscanf(speedStr, "%d", &speedBps)
+
+			if speedBps == 0 {
+				continue
+			}
+
+			// Convert to human-readable format
+			speedMbps := speedBps / 1000000
+			if speedMbps >= 1000 {
+				speedGbps := float64(speedMbps) / 1000.0
+				speedMap[portNum] = fmt.Sprintf("%.1fG", speedGbps)
+			} else if speedMbps > 0 {
+				speedMap[portNum] = fmt.Sprintf("%dM", speedMbps)
+			} else {
+				speedKbps := speedBps / 1000
+				speedMap[portNum] = fmt.Sprintf("%dK", speedKbps)
+			}
+		}
+	}
+
+	return speedMap
 }
 
 func getLocalPortMap(snmp *gosnmp.GoSNMP) (map[string]string, error) {

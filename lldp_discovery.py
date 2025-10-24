@@ -2020,6 +2020,7 @@ class SNMPLLDPCollector:
                 neighbors.append(LLDPNeighbor(
                     local_device=n['local_device'],
                     local_port=n['local_port'],
+                    local_port_speed=n.get('local_port_speed'),
                     remote_device=n['remote_device'],
                     remote_port=n['remote_port'],
                     remote_description=n.get('remote_description', '')
