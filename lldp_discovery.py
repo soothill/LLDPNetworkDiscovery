@@ -98,8 +98,10 @@ class SSHConnection:
 
             if self.device.ssh_key:
                 connect_params['key_filename'] = self.device.ssh_key
+                self.logger.debug(f"Using SSH key authentication: {self.device.ssh_key}")
             elif self.device.password:
                 connect_params['password'] = self.device.password
+                self.logger.debug(f"Using password authentication (password length: {len(self.device.password)})")
             else:
                 self.logger.error(f"No authentication method provided for {self.device.hostname}")
                 return False
