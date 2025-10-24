@@ -1913,6 +1913,21 @@ class LLDPDiscovery:
                     if speed_parser:
                         port_speeds = speed_parser(speed_stdout, local_ports)
 
+                        # Log the speed detection results
+                        device_type_names = {
+                            'aruba': 'HP Aruba',
+                            'arista': 'Arista',
+                            'ruijie': 'Ruijie'
+                        }
+                        PortSpeedDetector._log_speed_detection(
+                            device.hostname,
+                            device_type_names.get(device.device_type, device.device_type),
+                            speed_command,
+                            speed_stdout,
+                            local_ports,
+                            port_speeds
+                        )
+
                         # Assign speeds to neighbors
                         for neighbor in neighbors:
                             neighbor.local_port_speed = port_speeds.get(neighbor.local_port, "Unknown")
