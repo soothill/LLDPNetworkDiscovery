@@ -791,6 +791,19 @@ class PortSpeedDetector:
     """Detects port speeds for different device types"""
 
     @staticmethod
+    def _clean_port_names(ports: List[str]) -> Dict[str, str]:
+        """
+        Clean port names by removing suffixes like ",bridge", ",trunk", etc.
+        Returns mapping of clean_name -> original_name
+        """
+        port_mapping = {}
+        for port in ports:
+            # Extract just the interface name before any comma
+            clean_port = port.split(',')[0]
+            port_mapping[clean_port] = port
+        return port_mapping
+
+    @staticmethod
     def _log_speed_detection(device_hostname: str, device_type: str, command: str, output: str, ports: List[str], parsed_speeds: Dict[str, str]):
         """Log speed detection details to a debug file for analysis"""
         try:
@@ -824,30 +837,33 @@ class PortSpeedDetector:
         speeds = {}
         all_output = []
 
-        for port in ports:
+        # Clean port names - remove suffixes like ",bridge"
+        port_mapping = PortSpeedDetector._clean_port_names(ports)
+
+        for clean_port, original_port in port_mapping.items():
             # Try ethtool first (with sudo for permission)
-            stdout, stderr, exit_code = ssh.execute_command(f"sudo ethtool {port} 2>/dev/null | grep -i speed")
-            all_output.append(f"Port {port} (ethtool):\n{stdout if stdout else '(no output)'}\n")
+            stdout, stderr, exit_code = ssh.execute_command(f"sudo ethtool {clean_port} 2>/dev/null | grep -i speed")
+            all_output.append(f"Port {original_port} ({clean_port}) ethtool:\n{stdout if stdout else '(no output)'}\n")
 
             if exit_code == 0 and stdout:
                 # Parse "Speed: 1000Mb/s" or "Speed: 10000Mb/s"
                 match = re.search(r'Speed:\s*(\d+)Mb/s', stdout, re.IGNORECASE)
                 if match:
                     speed_mbps = int(match.group(1))
-                    speeds[port] = PortSpeedDetector._format_speed(speed_mbps)
+                    speeds[original_port] = PortSpeedDetector._format_speed(speed_mbps)
                     continue
 
             # Fallback: try /sys/class/net (usually readable without sudo)
-            stdout, stderr, exit_code = ssh.execute_command(f"cat /sys/class/net/{port}/speed 2>/dev/null")
-            all_output.append(f"Port {port} (/sys/class/net):\n{stdout if stdout else '(no output)'}\n")
+            stdout, stderr, exit_code = ssh.execute_command(f"cat /sys/class/net/{clean_port}/speed 2>/dev/null")
+            all_output.append(f"Port {original_port} ({clean_port}) /sys/class/net:\n{stdout if stdout else '(no output)'}\n")
 
             if exit_code == 0 and stdout.strip().isdigit():
                 speed_mbps = int(stdout.strip())
                 if speed_mbps > 0:
-                    speeds[port] = PortSpeedDetector._format_speed(speed_mbps)
+                    speeds[original_port] = PortSpeedDetector._format_speed(speed_mbps)
                     continue
 
-            speeds[port] = "Unknown"
+            speeds[original_port] = "Unknown"
 
         # Log the detection results
         PortSpeedDetector._log_speed_detection(
@@ -865,12 +881,7 @@ class PortSpeedDetector:
         speeds = {}
 
         # Clean port names - remove suffixes like ",bridge", ",trunk", ",OfficeAruba"
-        # Map cleaned names back to original requested names
-        port_mapping = {}
-        for port in ports:
-            # Extract just the interface name before any comma
-            clean_port = port.split(',')[0]
-            port_mapping[clean_port] = port
+        port_mapping = PortSpeedDetector._clean_port_names(ports)
 
         # Use ethernet print command for speed info
         stdout, stderr, exit_code = ssh.execute_command('/interface ethernet print detail without-paging')
@@ -952,6 +963,10 @@ class PortSpeedDetector:
     def get_port_speeds_arista(ssh: SSHConnection, ports: List[str]) -> Dict[str, str]:
         """Get port speeds for Arista EOS interfaces"""
         speeds = {}
+
+        # Clean port names - remove suffixes
+        port_mapping = PortSpeedDetector._clean_port_names(ports)
+
         # Use shell command for Arista devices (requires enable mode)
         stdout, stderr, exit_code = ssh.execute_shell_command('show interfaces status', enable_mode=True)
 
@@ -962,18 +977,18 @@ class PortSpeedDetector:
                 parts = line.split()
                 if len(parts) >= 2 and not line.startswith('Port'):
                     interface = parts[0]
-                    # Match any port in our list
-                    for port in ports:
-                        if port in interface or interface in port:
+                    # Match any port in our cleaned list
+                    for clean_port, original_port in port_mapping.items():
+                        if clean_port in interface or interface in clean_port:
                             # Look for speed pattern in the line (e.g., "1G", "10G", "100M")
                             speed_match = re.search(r'\b(\d+(?:\.\d+)?[GM](?:b(?:ps)?)?)\b', line, re.IGNORECASE)
                             if speed_match:
-                                speeds[port] = speed_match.group(1).upper()
+                                speeds[original_port] = speed_match.group(1).upper()
                             elif 'connected' in line.lower():
                                 # If connected but no speed found, mark as Link Up
-                                speeds[port] = "Link Up"
+                                speeds[original_port] = "Link Up"
                             else:
-                                speeds[port] = "Unknown"
+                                speeds[original_port] = "Unknown"
                             break
 
         # Fill in unknowns
@@ -995,6 +1010,10 @@ class PortSpeedDetector:
     def get_port_speeds_aruba(ssh: SSHConnection, ports: List[str]) -> Dict[str, str]:
         """Get port speeds for HP Aruba interfaces"""
         speeds = {}
+
+        # Clean port names - remove suffixes
+        port_mapping = PortSpeedDetector._clean_port_names(ports)
+
         # Use shell command for Aruba devices (requires enable mode)
         stdout, stderr, exit_code = ssh.execute_shell_command('show interfaces brief', enable_mode=True)
 
@@ -1006,9 +1025,9 @@ class PortSpeedDetector:
                 parts = line.split()
                 if len(parts) >= 3:
                     port_name = parts[0]
-                    for port in ports:
+                    for clean_port, original_port in port_mapping.items():
                         # Match port number (e.g., "9" matches port "9")
-                        if port_name == port or port in port_name or port_name in port:
+                        if port_name == clean_port or clean_port in port_name or port_name in clean_port:
                             # Look for speed pattern like "1000FDx", "10GigFD", "1000FD", etc.
                             # Speed patterns: 10M, 100M, 1000M, 10G, 1000FDx, 10GigFD, etc.
                             speed_match = re.search(r'(\d+(?:Gig|G|M)(?:FDx|FD|HDx|HD)?)', line, re.IGNORECASE)
@@ -1020,16 +1039,16 @@ class PortSpeedDetector:
                                 if num_match:
                                     speed_num = int(num_match.group(1))
                                     if 'G' in speed_str.upper() or 'GIG' in speed_str.upper():
-                                        speeds[port] = f"{speed_num}G"
+                                        speeds[original_port] = f"{speed_num}G"
                                     elif speed_num >= 1000:
                                         # 1000M = 1G
-                                        speeds[port] = f"{speed_num // 1000}G"
+                                        speeds[original_port] = f"{speed_num // 1000}G"
                                     else:
-                                        speeds[port] = f"{speed_num}M"
+                                        speeds[original_port] = f"{speed_num}M"
                             elif 'Up' in line:
-                                speeds[port] = "Link Up"
+                                speeds[original_port] = "Link Up"
                             else:
-                                speeds[port] = "Down"
+                                speeds[original_port] = "Down"
                             break
 
         # Fill in unknowns
@@ -1051,6 +1070,10 @@ class PortSpeedDetector:
     def get_port_speeds_ruijie(ssh: SSHConnection, ports: List[str]) -> Dict[str, str]:
         """Get port speeds for Ruijie interfaces"""
         speeds = {}
+
+        # Clean port names - remove suffixes
+        port_mapping = PortSpeedDetector._clean_port_names(ports)
+
         # Use shell command for Ruijie devices (requires enable mode)
         stdout, stderr, exit_code = ssh.execute_shell_command('show interfaces status', enable_mode=True)
 
@@ -1062,8 +1085,8 @@ class PortSpeedDetector:
                 parts = line.split()
                 if len(parts) >= 2 and not line.startswith('Port'):
                     interface = parts[0]
-                    for port in ports:
-                        if port in interface or interface in port:
+                    for clean_port, original_port in port_mapping.items():
+                        if clean_port in interface or interface in clean_port:
                             # Look for speed patterns
                             # Common formats: "a-1000", "1000", "10G", "a-10G", "auto"
                             speed_patterns = [
@@ -1080,18 +1103,18 @@ class PortSpeedDetector:
                                     # Convert to standard format
                                     if speed_str.isdigit():
                                         # Numeric value (e.g., "1000" -> "1G")
-                                        speeds[port] = PortSpeedDetector._format_speed(int(speed_str))
+                                        speeds[original_port] = PortSpeedDetector._format_speed(int(speed_str))
                                     else:
                                         # Already has suffix (e.g., "10G")
-                                        speeds[port] = speed_str.upper()
+                                        speeds[original_port] = speed_str.upper()
                                     speed_found = True
                                     break
 
                             if not speed_found:
                                 if 'connected' in line.lower():
-                                    speeds[port] = "Link Up"
+                                    speeds[original_port] = "Link Up"
                                 else:
-                                    speeds[port] = "Down"
+                                    speeds[original_port] = "Down"
                             break
 
         # Fill in unknowns
