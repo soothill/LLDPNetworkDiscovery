@@ -2043,14 +2043,22 @@ class SNMPLLDPCollector:
         sock.settimeout(timeout)
 
         try:
-            sock.sendto(packet, (self.device.ip_address, self.device.snmp_port))
-            response, _ = sock.recvfrom(65535)
+            self.logger.debug(f"Sending SNMP packet to {self.device.ip_address}:{self.device.snmp_port} (len={len(packet)})")
+            self.logger.debug(f"Packet hex: {packet.hex()[:100]}...")
+
+            sent_bytes = sock.sendto(packet, (self.device.ip_address, self.device.snmp_port))
+            self.logger.debug(f"Sent {sent_bytes} bytes, waiting for response...")
+
+            response, addr = sock.recvfrom(65535)
+            self.logger.debug(f"Received {len(response)} bytes from {addr}")
             return response
         except socket.timeout:
-            self.logger.debug(f"SNMP timeout for {self.device.ip_address}")
+            self.logger.warning(f"SNMP timeout for {self.device.ip_address}:{self.device.snmp_port} - no response received")
             return None
         except Exception as e:
-            self.logger.debug(f"SNMP send error: {e}")
+            self.logger.error(f"SNMP send error: {e}")
+            import traceback
+            traceback.print_exc()
             return None
         finally:
             sock.close()
