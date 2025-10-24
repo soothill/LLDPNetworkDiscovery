@@ -36,53 +36,24 @@ except ImportError:
     pysnmp = None
 
 if pysnmp:
-    # Try pysnmp 7.x - imports are split across modules
+    # Use pysnmp 7.x v3arch API (standard for 7.x)
     try:
-        from pysnmp.hlapi.v1arch.asyncio import (
-            CommunityData, UdpTransportTarget,
+        from pysnmp.hlapi.v3arch.asyncio import (
+            CommunityData, UdpTransportTarget, ContextData,
             ObjectType, ObjectIdentity, SnmpEngine
         )
-        from pysnmp.hlapi.v1arch.asyncio.cmdgen import getCmd, nextCmd
-        from pysnmp.proto.rfc1905 import noSuchInstance, noSuchObject
-        ContextData = None  # Not used in v1arch
+        from pysnmp.hlapi.v3arch.asyncio.cmdgen import get_cmd, next_cmd
+        # Create aliases for backward compatibility in code
+        getCmd = get_cmd
+        nextCmd = next_cmd
         SNMP_AVAILABLE = True
-        print(f"SUCCESS: Using pysnmp 7.x v1arch asyncio API (version {pysnmp_version})")
+        print(f"SUCCESS: Using pysnmp v3arch asyncio API (version {pysnmp_version})")
     except (ImportError, AttributeError, ModuleNotFoundError) as e:
-        print(f"DEBUG: v7 v1arch split imports failed: {e}")
-        # Try pysnmp 6.x/7.x with v3arch API - use new non-deprecated functions
-        try:
-            from pysnmp.hlapi.v3arch.asyncio import (
-                CommunityData, UdpTransportTarget, ContextData,
-                ObjectType, ObjectIdentity, SnmpEngine
-            )
-            from pysnmp.hlapi.v3arch.asyncio.cmdgen import get_cmd, next_cmd
-            # Create aliases for backward compatibility
-            getCmd = get_cmd
-            nextCmd = next_cmd
-            SNMP_AVAILABLE = True
-            print(f"SUCCESS: Using pysnmp v3arch asyncio API with new functions (version {pysnmp_version})")
-        except (ImportError, AttributeError, ModuleNotFoundError) as e:
-            print(f"DEBUG: v3arch split imports failed: {e}")
-            # Try legacy pysnmp v4/v5 with classic API
-            try:
-                from pysnmp.hlapi import (
-                    CommunityData, UdpTransportTarget, ContextData,
-                    ObjectType, ObjectIdentity, SnmpEngine,
-                    getCmd, nextCmd
-                )
-                SNMP_AVAILABLE = True
-                print(f"SUCCESS: Using pysnmp v4/v5 classic API (version {pysnmp_version})")
-            except (ImportError, AttributeError, ModuleNotFoundError) as e:
-                print(f"DEBUG: v4/v5 classic API import failed: {e}")
-                SNMP_AVAILABLE = False
-            except Exception as e:
-                print(f"DEBUG: v4/v5 import unexpected error: {e}")
-                SNMP_AVAILABLE = False
-        except Exception as e:
-            print(f"DEBUG: v3arch import unexpected error: {e}")
-            SNMP_AVAILABLE = False
+        print(f"DEBUG: v3arch imports failed: {e}")
+        print(f"ERROR: pysnmp 7.x v3arch API not available")
+        SNMP_AVAILABLE = False
     except Exception as e:
-        print(f"DEBUG: v7 import unexpected error: {e}")
+        print(f"DEBUG: v3arch import unexpected error: {e}")
         SNMP_AVAILABLE = False
 
 if not SNMP_AVAILABLE:
@@ -2044,12 +2015,13 @@ class SNMPLLDPCollector:
         neighbors = []
 
         if self.device.snmp_version == '2c':
-            community = await CommunityData(self.device.snmp_community or 'public').create()
+            # v3arch doesn't use .create() - objects are ready to use
+            community = CommunityData(self.device.snmp_community or 'public')
         else:
             self.logger.error(f"SNMP version {self.device.snmp_version} not yet supported")
             return neighbors
 
-        target = await UdpTransportTarget((self.device.ip_address, self.device.snmp_port)).create()
+        target = UdpTransportTarget((self.device.ip_address, self.device.snmp_port))
 
         try:
             # First, get local port descriptions to map port IDs to interface names
@@ -2297,15 +2269,16 @@ class LLDPDiscovery:
 
                 # Run async SNMP test
                 async def test_snmp():
-                    community = await CommunityData(device.snmp_community or 'public').create()
-                    target = await UdpTransportTarget((device.ip_address, device.snmp_port)).create()
+                    # v3arch doesn't use .create() - objects are ready to use
+                    community = CommunityData(device.snmp_community or 'public')
+                    target = UdpTransportTarget((device.ip_address, device.snmp_port))
 
                     # Query sysName (1.3.6.1.2.1.1.5.0) as a simple connectivity test
                     async for (errorIndication, errorStatus, errorIndex, varBinds) in get_cmd(
                         SnmpEngine(),
                         community,
                         target,
-                        ContextData() if ContextData else None,
+                        ContextData(),
                         ObjectType(ObjectIdentity('1.3.6.1.2.1.1.5.0'))
                     ):
                         if errorIndication:
