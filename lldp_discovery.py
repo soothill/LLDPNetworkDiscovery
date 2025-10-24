@@ -904,6 +904,8 @@ class PortSpeedDetector:
         if exit_code == 0:
             current_interface = None
             current_speed = None
+            advertise_speeds = []  # Accumulate across multiple lines
+            in_advertise = False
 
             for line in stdout.split('\n'):
                 line = line.strip()
@@ -924,6 +926,8 @@ class PortSpeedDetector:
 
                     current_interface = name_match.group(1)
                     current_speed = None
+                    advertise_speeds = []
+                    in_advertise = False
                     debug_info.append(f"Found interface: {current_interface}")
 
                 # Match speed= field (actual negotiated speed)
@@ -934,41 +938,57 @@ class PortSpeedDetector:
                         speed_value = speed_match.group(1).upper()
                         # Normalize: "10G" stays "10G", "2.5G" stays "2.5G"
                         current_speed = speed_value
+                        in_advertise = False  # Stop looking for advertise continuation
                         debug_info.append(f"  Found speed for {current_interface}: {current_speed}")
                         continue
 
-                    # If no speed= field, check advertise= for max capability (auto-negotiation)
-                    # Example: "advertise=...1G-baseT-full,10G-baseT..."
-                    if not current_speed and 'advertise=' in line:
-                        # Extract highest advertised speed
-                        advertise_speeds = []
-                        # Look for patterns like "10G-baseT", "1G-baseT-full", "2.5G-baseT"
-                        for adv_match in re.finditer(r'(\d+(?:\.\d+)?)[GM]-base', line, re.IGNORECASE):
-                            speed_str = adv_match.group(0)
-                            # Extract just the numeric part with G/M
-                            num_match = re.search(r'(\d+(?:\.\d+)?[GM])', speed_str, re.IGNORECASE)
-                            if num_match:
-                                advertise_speeds.append(num_match.group(1).upper())
+                    # Check if we're starting or continuing an advertise= field
+                    # Advertise can span multiple lines, so we accumulate speeds
+                    if 'advertise=' in line:
+                        in_advertise = True
+                        advertise_speeds = []  # Reset for this interface
 
-                        if advertise_speeds:
-                            # Find highest speed (prefer G over M, higher numbers)
-                            def speed_value(s):
-                                num = float(re.search(r'([\d.]+)', s).group(1))
-                                return num * 1000 if 'G' in s else num
+                    # If we're in advertise mode (current or continuation line)
+                    if in_advertise and not current_speed:
+                        # Check if this line has a new field= pattern (not advertise continuation)
+                        # MikroTik continuation lines just have values, not field= patterns
+                        if '=' in line and not line.startswith('advertise='):
+                            # This is a new field, stop accumulating advertise speeds
+                            # But first, finalize the advertised speed if we have any
+                            if advertise_speeds:
+                                def speed_value(s):
+                                    num = float(re.search(r'([\d.]+)', s).group(1))
+                                    return num * 1000 if 'G' in s else num
+                                highest = max(advertise_speeds, key=speed_value)
+                                current_speed = f"{highest} (adv)"
+                                debug_info.append(f"  Found advertised speed for {current_interface}: {current_speed} from {advertise_speeds}")
+                            in_advertise = False
+                        else:
+                            # Continue accumulating speeds from this line
+                            for adv_match in re.finditer(r'(\d+(?:\.\d+)?)[GM]-base', line, re.IGNORECASE):
+                                speed_str = adv_match.group(0)
+                                num_match = re.search(r'(\d+(?:\.\d+)?[GM])', speed_str, re.IGNORECASE)
+                                if num_match:
+                                    advertise_speeds.append(num_match.group(1).upper())
 
-                            highest = max(advertise_speeds, key=speed_value)
-                            current_speed = f"{highest} (adv)"
-                            debug_info.append(f"  Found advertised speed for {current_interface}: {current_speed}")
+            # Save last interface - check if we need to finalize advertise speeds first
+            if current_interface:
+                if not current_speed and advertise_speeds:
+                    def speed_value(s):
+                        num = float(re.search(r'([\d.]+)', s).group(1))
+                        return num * 1000 if 'G' in s else num
+                    highest = max(advertise_speeds, key=speed_value)
+                    current_speed = f"{highest} (adv)"
+                    debug_info.append(f"  Found advertised speed for last interface {current_interface}: {current_speed} from {advertise_speeds}")
 
-            # Save last interface
-            if current_interface and current_speed:
-                if current_interface in port_mapping:
-                    debug_info.append(f"Saving last interface {current_interface} = {current_speed} to ports: {port_mapping[current_interface]}")
-                    # Apply to all original ports that map to this clean name
-                    for original_port in port_mapping[current_interface]:
-                        speeds[original_port] = current_speed
-                else:
-                    debug_info.append(f"Skipping last interface {current_interface} (not in port_mapping)")
+                if current_speed:
+                    if current_interface in port_mapping:
+                        debug_info.append(f"Saving last interface {current_interface} = {current_speed} to ports: {port_mapping[current_interface]}")
+                        # Apply to all original ports that map to this clean name
+                        for original_port in port_mapping[current_interface]:
+                            speeds[original_port] = current_speed
+                    else:
+                        debug_info.append(f"Skipping last interface {current_interface} (not in port_mapping)")
 
         # Fill in unknowns for originally requested ports
         for port in ports:
