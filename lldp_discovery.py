@@ -36,28 +36,30 @@ except ImportError:
     pysnmp = None
 
 if pysnmp:
-    # Try pysnmp 7.x with v1arch API
+    # Try pysnmp 7.x - imports are split across modules
     try:
         from pysnmp.hlapi.v1arch.asyncio import (
-            CommunityData, UdpTransportTarget, ContextData,
-            ObjectType, ObjectIdentity, SnmpEngine,
-            getCmd, nextCmd
+            CommunityData, UdpTransportTarget,
+            ObjectType, ObjectIdentity, SnmpEngine
         )
+        from pysnmp.hlapi.v1arch.asyncio.cmdgen import getCmd, nextCmd
+        from pysnmp.proto.rfc1905 import noSuchInstance, noSuchObject
+        ContextData = None  # Not used in v1arch
         SNMP_AVAILABLE = True
         print(f"SUCCESS: Using pysnmp 7.x v1arch asyncio API (version {pysnmp_version})")
     except (ImportError, AttributeError, ModuleNotFoundError) as e:
-        print(f"DEBUG: v7 v1arch asyncio import failed: {e}")
-        # Try pysnmp 6.x with v3arch API
+        print(f"DEBUG: v7 v1arch split imports failed: {e}")
+        # Try pysnmp 6.x/7.x with v3arch API
         try:
             from pysnmp.hlapi.v3arch.asyncio import (
                 CommunityData, UdpTransportTarget, ContextData,
-                ObjectType, ObjectIdentity, SnmpEngine,
-                getCmd, nextCmd
+                ObjectType, ObjectIdentity, SnmpEngine
             )
+            from pysnmp.hlapi.v3arch.asyncio.cmdgen import getCmd, nextCmd
             SNMP_AVAILABLE = True
-            print(f"SUCCESS: Using pysnmp 6.x v3arch asyncio API (version {pysnmp_version})")
+            print(f"SUCCESS: Using pysnmp v3arch asyncio API (version {pysnmp_version})")
         except (ImportError, AttributeError, ModuleNotFoundError) as e:
-            print(f"DEBUG: v6 v3arch asyncio import failed: {e}")
+            print(f"DEBUG: v3arch split imports failed: {e}")
             # Try legacy pysnmp v4/v5 with classic API
             try:
                 from pysnmp.hlapi import (
@@ -74,7 +76,7 @@ if pysnmp:
                 print(f"DEBUG: v4/v5 import unexpected error: {e}")
                 SNMP_AVAILABLE = False
         except Exception as e:
-            print(f"DEBUG: v6 import unexpected error: {e}")
+            print(f"DEBUG: v3arch import unexpected error: {e}")
             SNMP_AVAILABLE = False
     except Exception as e:
         print(f"DEBUG: v7 import unexpected error: {e}")
