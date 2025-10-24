@@ -110,7 +110,7 @@ class SSHConnection:
                 # Restore logging level
                 paramiko_logger.setLevel(original_level)
                 if 'no acceptable host key' in str(e).lower() or 'incompatible' in str(e).lower():
-                    self.logger.debug(f"Retrying {self.device.hostname} with legacy SSH algorithms enabled...")
+                    self.logger.info(f"First connection attempt failed. Retrying {self.device.hostname} with legacy SSH algorithms...")
 
                     # Close and recreate client
                     self.client.close()
@@ -140,6 +140,15 @@ class SSHConnection:
                             except ImportError:
                                 self.logger.warning("Could not import RSAKey for ssh-rsa support")
 
+                        # Check if ssh-dss is available
+                        if 'ssh-dss' not in transport_module.Transport._key_info:
+                            try:
+                                from paramiko.dsskey import DSSKey
+                                transport_module.Transport._key_info['ssh-dss'] = DSSKey
+                                self.logger.debug("Re-enabled ssh-dss host key algorithm")
+                            except ImportError:
+                                self.logger.debug("ssh-dss not available in this paramiko version")
+
                         # Build list of available host key algorithms
                         available_keys = [
                             'rsa-sha2-512',
@@ -151,20 +160,18 @@ class SSHConnection:
                             'ecdsa-sha2-nistp521',
                         ]
 
-                        # Only add ssh-dss if it's supported (removed in newer paramiko)
-                        if 'ssh-dss' in original_key_info:
-                            available_keys.append('ssh-dss')
-                        else:
-                            # Try to re-enable DSS
-                            try:
-                                from paramiko.dsskey import DSSKey
-                                transport_module.Transport._key_info['ssh-dss'] = DSSKey
-                                available_keys.append('ssh-dss')
-                                self.logger.debug("Re-enabled ssh-dss host key algorithm")
-                            except ImportError:
-                                self.logger.debug("ssh-dss not available in this paramiko version")
+                        # Filter to only include keys that are actually available
+                        final_keys = []
+                        for key in available_keys:
+                            if key in transport_module.Transport._key_info:
+                                final_keys.append(key)
 
-                        transport_module.Transport._preferred_keys = tuple(available_keys)
+                        if not final_keys:
+                            self.logger.error("No host key algorithms available!")
+                            raise
+
+                        transport_module.Transport._preferred_keys = tuple(final_keys)
+                        self.logger.debug(f"Enabled host key algorithms: {final_keys}")
 
                         # Build list of available KEX algorithms
                         available_kex = [
@@ -182,13 +189,17 @@ class SSHConnection:
                         try:
                             from paramiko.kex_group1 import KexGroup1
                             available_kex.append('diffie-hellman-group1-sha1')
+                            self.logger.debug("Added diffie-hellman-group1-sha1 KEX algorithm")
                         except ImportError:
-                            pass
+                            self.logger.debug("diffie-hellman-group1-sha1 not available")
 
                         transport_module.Transport._preferred_kex = tuple(available_kex)
+                        self.logger.debug(f"Enabled KEX algorithms: {len(available_kex)} algorithms")
 
                         # Retry connection with legacy algorithms
+                        self.logger.debug(f"Attempting connection with {len(final_keys)} host key algorithms and {len(available_kex)} KEX algorithms")
                         self.client.connect(**connect_params)
+                        self.logger.info(f"✓ Successfully connected to {self.device.hostname} using legacy SSH algorithms")
                     finally:
                         # Restore original values
                         transport_module.Transport._preferred_keys = original_preferred_keys
