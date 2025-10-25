@@ -2673,11 +2673,34 @@ class LLDPDiscovery:
         return len(self.neighbors) > 0
 
     def _is_physical_interface(self, interface_name: str) -> bool:
-        """Check if an interface is physical (not virtual like VLAN, bridge, tunnel)"""
+        """Check if an interface is physical (not virtual like VLAN, bridge, tunnel)
+
+        Special handling for Proxmox interfaces:
+        - fwbr* (Proxmox firewall bridges showing VM connections) are allowed
+        - fwpr*, fwln* (internal bridge ports) are excluded
+        - tap* (VM tap devices) are excluded
+        """
         if not interface_name:
             return False
 
         interface_lower = interface_name.lower()
+
+        # Proxmox firewall bridge interfaces (fwbr*) are special - they represent
+        # VM connections and should be shown in the topology
+        if interface_lower.startswith('fwbr'):
+            return True  # Allow Proxmox bridge pseudo-devices
+
+        # Proxmox internal interfaces should be filtered
+        proxmox_internal_patterns = [
+            'fwpr',      # Proxmox firewall proxy port
+            'fwln',      # Proxmox firewall link
+            'tap',       # Proxmox VM TAP device
+            'vmbr',      # Proxmox virtual bridge (actual bridge, not our pseudo-device)
+        ]
+
+        for pattern in proxmox_internal_patterns:
+            if interface_lower.startswith(pattern):
+                return False
 
         # Virtual interface patterns to exclude
         virtual_patterns = [
@@ -2695,13 +2718,17 @@ class LLDPDiscovery:
             'virbr',     # Virtual bridge
             'wg',        # WireGuard
             'tun',       # Tunnel
-            'tap',       # TAP device
         ]
 
         # Check if interface name contains any virtual pattern
         for pattern in virtual_patterns:
             if pattern in interface_lower:
                 return False
+
+        # Also check for interfaces starting with 'br' (common bridge naming)
+        # but not 'fwbr' which we already allowed above
+        if interface_lower.startswith('br'):
+            return False
 
         return True
 
