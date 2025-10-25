@@ -2858,8 +2858,9 @@ class LLDPDiscovery:
         fig_width = max(30, num_nodes * 3)
         fig_height = max(20, num_nodes * 2)
 
-        # Create visualization with high DPI from the start
-        plt.figure(figsize=(fig_width, fig_height), dpi=150)
+        # Create visualization - use lower DPI for figure creation to save memory
+        # Final DPI will be set during savefig()
+        plt.figure(figsize=(fig_width, fig_height), dpi=100)
 
         # Use spring layout with more spacing (k controls distance between nodes)
         # Higher k = more spread out, more iterations = better layout
@@ -2945,20 +2946,46 @@ class LLDPDiscovery:
         plt.axis('off')
         plt.tight_layout(pad=2)
 
-        # Save as PNG with very high DPI for crisp text
-        # DPI 600 produces professional quality output suitable for printing
-        self.logger.info(f"Saving PNG with 600 DPI (this may take a moment for large networks)...")
-        plt.savefig(output_file, dpi=600, bbox_inches='tight',
-                   facecolor='white', edgecolor='none',
-                   format='png', metadata={'Software': 'LLDP Network Discovery'})
-        self.logger.info(f"PNG visualization saved to {output_file} (high resolution)")
-
-        # Also save as SVG (vector format - infinitely scalable, always crisp)
+        # Save as SVG first (vector format - infinitely scalable, low memory)
         svg_file = output_file.replace('.png', '.svg')
+        self.logger.info(f"Saving SVG (vector format - perfect quality, low memory)...")
         plt.savefig(svg_file, bbox_inches='tight',
                    facecolor='white', edgecolor='none',
                    format='svg', metadata={'Software': 'LLDP Network Discovery'})
-        self.logger.info(f"SVG visualization saved to {svg_file} (vector format - zoom without quality loss)")
+        self.logger.info(f"✓ SVG saved to {svg_file} (vector - zoom without quality loss)")
+
+        # Save PNG with automatic DPI adjustment based on network size
+        # Large networks need lower DPI to avoid memory issues
+        if num_nodes > 30:
+            target_dpi = 300  # Lower DPI for large networks
+            quality_note = "medium resolution (large network)"
+        elif num_nodes > 15:
+            target_dpi = 450  # Medium-high DPI
+            quality_note = "high resolution"
+        else:
+            target_dpi = 600  # Full quality for small networks
+            quality_note = "ultra-high resolution"
+
+        self.logger.info(f"Saving PNG with {target_dpi} DPI ({quality_note})...")
+
+        try:
+            plt.savefig(output_file, dpi=target_dpi, bbox_inches='tight',
+                       facecolor='white', edgecolor='none',
+                       format='png', metadata={'Software': 'LLDP Network Discovery'})
+            self.logger.info(f"✓ PNG saved to {output_file} ({quality_note})")
+        except MemoryError:
+            self.logger.warning(f"Memory error at {target_dpi} DPI, retrying at 150 DPI...")
+            try:
+                plt.savefig(output_file, dpi=150, bbox_inches='tight',
+                           facecolor='white', edgecolor='none',
+                           format='png', metadata={'Software': 'LLDP Network Discovery'})
+                self.logger.info(f"✓ PNG saved to {output_file} (150 DPI - use SVG for better quality)")
+            except MemoryError:
+                self.logger.error(f"Unable to save PNG due to memory constraints")
+                self.logger.info(f"✓ Use the SVG file instead: {svg_file}")
+
+        self.logger.info(f"\n💡 For best quality, use the SVG file: {svg_file}")
+        self.logger.info(f"   Open with: open {svg_file} (or any web browser)")
 
         plt.close()  # Free memory
 
