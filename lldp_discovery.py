@@ -927,7 +927,6 @@ class PortSpeedDetector:
                 f.write("=" * 100 + "\n\n")
         except Exception as e:
             # Don't fail if logging fails
-            print(f"WARNING: Failed to write debug log: {e}")
             pass
 
     @staticmethod
@@ -1546,21 +1545,18 @@ class LLDPParser:
         import logging
         logger = logging.getLogger(__name__)
 
-        # Save raw LLDP output for debugging
-        print(f"DEBUG: Linux parser called for {hostname}, output length: {len(output)} chars")
-        try:
-            debug_filename = f"linux_lldp_debug_{hostname}.txt"
-            with open(debug_filename, 'w') as f:
-                f.write(output)
-            logger.info(f"Saved Linux LLDP output to {debug_filename}")
-            print(f"DEBUG: Saved Linux LLDP output to {debug_filename}")
-        except Exception as e:
-            logger.error(f"Failed to save Linux LLDP debug file: {e}")
-            print(f"ERROR: Failed to save Linux LLDP debug file: {e}")
+        # Save raw LLDP output for debugging (optional, disabled by default)
+        # Uncomment below to save debug files
+        # try:
+        #     debug_filename = f"linux_lldp_debug_{hostname}.txt"
+        #     with open(debug_filename, 'w') as f:
+        #         f.write(output)
+        #     logger.debug(f"Saved Linux LLDP output to {debug_filename}")
+        # except Exception as e:
+        #     logger.error(f"Failed to save Linux LLDP debug file: {e}")
 
         if not output or len(output) < 10:
             logger.warning(f"Linux: Empty or very short LLDP output received from {hostname}")
-            print(f"WARNING: Empty or very short LLDP output from {hostname}")
             return neighbors
 
         # Parse lldpctl output
@@ -1651,10 +1647,6 @@ class LLDPParser:
         neighbors = []
         lines = output.split('\n')
 
-        print(f"DEBUG: Parsing MikroTik detail output for {hostname}")
-        print(f"DEBUG: Output length: {len(output)} chars")
-        print(f"DEBUG: First 500 chars: {output[:500]}")
-
         current_entry = {}
         for line in lines:
             line = line.strip()
@@ -1667,7 +1659,6 @@ class LLDPParser:
             if re.match(r'^\d+\s', line):
                 # Save previous entry if complete
                 if current_entry.get('interface') and current_entry.get('identity'):
-                    print(f"DEBUG: Adding neighbor - Interface: {current_entry['interface']}, Identity: {current_entry['identity']}")
                     neighbors.append(LLDPNeighbor(
                         local_device=hostname,
                         local_port=current_entry['interface'],
@@ -1686,11 +1677,9 @@ class LLDPParser:
                 key = match.group(1)
                 value = match.group(2).strip('"\'')  # Remove quotes
                 current_entry[key] = value
-                print(f"DEBUG: Parsed {key}={value}")
 
         # Don't forget the last entry
         if current_entry.get('interface') and current_entry.get('identity'):
-            print(f"DEBUG: Adding neighbor - Interface: {current_entry['interface']}, Identity: {current_entry['identity']}")
             neighbors.append(LLDPNeighbor(
                 local_device=hostname,
                 local_port=current_entry['interface'],
@@ -1699,7 +1688,6 @@ class LLDPParser:
                 remote_description=current_entry.get('platform', '')
             ))
 
-        print(f"DEBUG: Total neighbors found for {hostname}: {len(neighbors)}")
         return neighbors
 
     @staticmethod
@@ -1715,22 +1703,18 @@ class LLDPParser:
         import logging
         logger = logging.getLogger(__name__)
 
-        print(f"DEBUG: Arista parser called for {hostname}, output length: {len(output)} chars")
-
-        # Save raw LLDP output for debugging
-        try:
-            debug_filename = f"arista_lldp_debug_{hostname}.txt"
-            with open(debug_filename, 'w') as f:
-                f.write(output)
-            logger.info(f"Saved Arista LLDP output to {debug_filename}")
-            print(f"DEBUG: Saved Arista LLDP output to {debug_filename}")
-        except Exception as e:
-            logger.error(f"Failed to save Arista LLDP debug file: {e}")
-            print(f"ERROR: Failed to save Arista LLDP debug file: {e}")
+        # Save raw LLDP output for debugging (optional, disabled by default)
+        # Uncomment below to save debug files
+        # try:
+        #     debug_filename = f"arista_lldp_debug_{hostname}.txt"
+        #     with open(debug_filename, 'w') as f:
+        #         f.write(output)
+        #     logger.debug(f"Saved Arista LLDP output to {debug_filename}")
+        # except Exception as e:
+        #     logger.error(f"Failed to save Arista LLDP debug file: {e}")
 
         if not output or len(output) < 10:
             logger.warning(f"Arista: Empty or very short LLDP output received from {hostname}")
-            print(f"WARNING: Empty or very short LLDP output from {hostname}")
             return neighbors
 
         for line in lines:
