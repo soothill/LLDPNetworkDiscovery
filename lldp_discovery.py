@@ -27,9 +27,28 @@ import os
 
 # For graphical output
 try:
-    import networkx as nx
+    import matplotlib
+    matplotlib.use('Agg')  # Use non-interactive backend for better quality/performance
     import matplotlib.pyplot as plt
     from matplotlib.patches import FancyBboxPatch
+    import networkx as nx
+
+    # Configure matplotlib for high-quality output
+    matplotlib.rcParams['figure.dpi'] = 150
+    matplotlib.rcParams['savefig.dpi'] = 600
+    matplotlib.rcParams['savefig.bbox'] = 'tight'
+    matplotlib.rcParams['font.size'] = 10
+    matplotlib.rcParams['axes.labelsize'] = 12
+    matplotlib.rcParams['axes.titlesize'] = 14
+    matplotlib.rcParams['xtick.labelsize'] = 10
+    matplotlib.rcParams['ytick.labelsize'] = 10
+    matplotlib.rcParams['legend.fontsize'] = 12
+    matplotlib.rcParams['figure.titlesize'] = 16
+    matplotlib.rcParams['text.antialiased'] = True
+    matplotlib.rcParams['savefig.facecolor'] = 'white'
+    matplotlib.rcParams['savefig.edgecolor'] = 'none'
+    matplotlib.rcParams['savefig.format'] = 'png'
+
     GRAPHVIZ_AVAILABLE = True
 except ImportError:
     GRAPHVIZ_AVAILABLE = False
@@ -2879,15 +2898,22 @@ class LLDPDiscovery:
         plt.axis('off')
         plt.tight_layout(pad=2)
 
-        # Save to file with very high DPI for crisp text
+        # Save as PNG with very high DPI for crisp text
         # DPI 600 produces professional quality output suitable for printing
+        self.logger.info(f"Saving PNG with 600 DPI (this may take a moment for large networks)...")
         plt.savefig(output_file, dpi=600, bbox_inches='tight',
                    facecolor='white', edgecolor='none',
                    format='png', metadata={'Software': 'LLDP Network Discovery'})
-        self.logger.info(f"Network topology visualization saved to {output_file} (high resolution)")
+        self.logger.info(f"PNG visualization saved to {output_file} (high resolution)")
 
-        # Optionally display
-        # plt.show()
+        # Also save as SVG (vector format - infinitely scalable, always crisp)
+        svg_file = output_file.replace('.png', '.svg')
+        plt.savefig(svg_file, bbox_inches='tight',
+                   facecolor='white', edgecolor='none',
+                   format='svg', metadata={'Software': 'LLDP Network Discovery'})
+        self.logger.info(f"SVG visualization saved to {svg_file} (vector format - zoom without quality loss)")
+
+        plt.close()  # Free memory
 
     def print_topology_summary(self):
         """Print a text summary of the discovered topology"""
