@@ -81,8 +81,7 @@ def parse_proxmox(output: str, hostname: str) -> List[LLDPNeighbor]:
         interface_map[entry['local_interface']] = entry
 
     # Identify VM tap interfaces and their connected VMs
-    vm_connections = {}  # Maps VM name to list of interfaces
-    bridges = {}  # Maps bridge ID to list of VMs
+    bridges = {}  # Maps bridge ID (VMID) to list of VM connections
 
     for iface, entry in interface_map.items():
         # Detect tap interfaces (VM side)
@@ -94,14 +93,6 @@ def parse_proxmox(output: str, hostname: str) -> List[LLDPNeighbor]:
                 vm_name = entry['remote_system']
 
                 if vm_name != hostname:  # Not a self-connection
-                    if vm_name not in vm_connections:
-                        vm_connections[vm_name] = []
-                    vm_connections[vm_name].append({
-                        'vmid': vmid,
-                        'interface': iface,
-                        'vm_port': entry['remote_port']
-                    })
-
                     # Associate with bridge
                     if vmid not in bridges:
                         bridges[vmid] = []
@@ -111,7 +102,12 @@ def parse_proxmox(output: str, hostname: str) -> List[LLDPNeighbor]:
                         'vm_port': entry['remote_port']
                     })
 
-    print(f"Proxmox: Found {len(vm_connections)} VMs connected through bridges")
+    # Count unique VMs across all bridges
+    all_vms = set()
+    for vms_list in bridges.values():
+        all_vms.update(vm['vm_name'] for vm in vms_list)
+
+    print(f"Proxmox: Found {len(all_vms)} unique VMs connected through {len(bridges)} bridges")
 
     # Build final neighbor list
     neighbors = []
