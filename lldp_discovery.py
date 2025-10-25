@@ -2763,7 +2763,13 @@ class LLDPDiscovery:
         filtered_neighbors = []
 
         for neighbor in self.neighbors:
-            # Filter out virtual interfaces
+            # Special case: Bridge pseudo-devices should always pass through
+            # (they're not real devices, but topology nodes we created)
+            if neighbor.local_device.startswith('Bridge-'):
+                filtered_neighbors.append(neighbor)
+                continue
+
+            # Filter out virtual interfaces for real devices
             if not self._is_physical_interface(neighbor.local_port):
                 self.logger.debug(f"Filtering virtual interface: {neighbor.local_device}:{neighbor.local_port}")
                 continue
@@ -2878,9 +2884,9 @@ class LLDPDiscovery:
         # Get node colors and sizes based on device type and class
         node_colors = []
         node_sizes = []
-        # Larger base size to ensure hostnames fit inside circles
-        # Scale down gradually for large networks but maintain readability
-        base_node_size = min(15000, max(8000, 250000 / num_nodes))
+        # Much larger base size to ensure hostnames fit comfortably inside circles
+        # Even large networks need readable node sizes
+        base_node_size = min(25000, max(12000, 400000 / num_nodes))
 
         for node in G.nodes():
             device_type = G.nodes[node].get('device_type', 'unknown')
