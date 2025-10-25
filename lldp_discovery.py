@@ -172,7 +172,7 @@ class SSHConnection:
                 # Restore logging level
                 paramiko_logger.setLevel(original_level)
                 if 'no acceptable host key' in str(e).lower() or 'incompatible' in str(e).lower():
-                    self.logger.info(f"First connection attempt failed. Retrying {self.device.hostname} with legacy SSH algorithms...")
+                    self.logger.debug(f"First connection attempt failed. Retrying {self.device.hostname} with legacy SSH algorithms...")
 
                     # Close and recreate client
                     self.client.close()
@@ -200,7 +200,7 @@ class SSHConnection:
                             try:
                                 from paramiko.dsskey import DSSKey
                                 transport_module.Transport._key_info['ssh-dss'] = DSSKey
-                                self.logger.info("✓ Re-enabled ssh-dss host key algorithm (REQUIRED for HP Aruba 2930F)")
+                                self.logger.debug("✓ Re-enabled ssh-dss host key algorithm (REQUIRED for HP Aruba 2930F)")
                                 dss_enabled = True
                             except ImportError:
                                 self.logger.error("✗ Could not import DSSKey - ssh-dss will not be available!")
@@ -253,7 +253,7 @@ class SSHConnection:
                             self.logger.error("WARNING: ssh-dss not in final key list - HP Aruba 2930F connection may fail!")
 
                         transport_module.Transport._preferred_keys = tuple(final_keys)
-                        self.logger.info(f"Enabled {len(final_keys)} host key algorithms (ssh-dss={'YES' if 'ssh-dss' in final_keys else 'NO'}, ssh-rsa={'YES' if 'ssh-rsa' in final_keys else 'NO'})")
+                        self.logger.debug(f"Enabled {len(final_keys)} host key algorithms (ssh-dss={'YES' if 'ssh-dss' in final_keys else 'NO'}, ssh-rsa={'YES' if 'ssh-rsa' in final_keys else 'NO'})")
 
                         # Build list of available KEX algorithms
                         # CRITICAL: diffie-hellman-group14-sha1 MUST be available for HP Aruba 2930F
@@ -263,11 +263,11 @@ class SSHConnection:
                         try:
                             from paramiko.kex_group14 import KexGroup14SHA1
                             available_kex.append('diffie-hellman-group14-sha1')
-                            self.logger.info("✓ Added diffie-hellman-group14-sha1 KEX (REQUIRED for HP Aruba 2930F)")
+                            self.logger.debug("✓ Added diffie-hellman-group14-sha1 KEX (REQUIRED for HP Aruba 2930F)")
                         except ImportError:
                             # It might still be available even if we can't import the class
                             available_kex.append('diffie-hellman-group14-sha1')
-                            self.logger.info("✓ Added diffie-hellman-group14-sha1 KEX (fallback)")
+                            self.logger.debug("✓ Added diffie-hellman-group14-sha1 KEX (fallback)")
 
                         # Then add modern KEX algorithms
                         available_kex.extend([
@@ -328,7 +328,7 @@ class SSHConnection:
                         # Retry connection with legacy algorithms
                         self.logger.debug(f"Attempting connection with {len(final_keys)} host key algorithms and {len(available_kex)} KEX algorithms")
                         self.client.connect(**connect_params)
-                        self.logger.info(f"✓ Successfully connected to {self.device.hostname} using legacy SSH algorithms")
+                        self.logger.debug(f"✓ Successfully connected to {self.device.hostname} using legacy SSH algorithms")
                     finally:
                         # Restore original values
                         transport_module.Transport._preferred_keys = original_preferred_keys
@@ -350,7 +350,7 @@ class SSHConnection:
 
             if self.device.password:
                 try:
-                    self.logger.info(f"Retrying {self.device.hostname} with explicit keyboard-interactive authentication...")
+                    self.logger.debug(f"Retrying {self.device.hostname} with explicit keyboard-interactive authentication...")
 
                     # Get transport from the existing connection attempt
                     transport = self.client.get_transport()
@@ -363,7 +363,7 @@ class SSHConnection:
 
                         # Try keyboard-interactive auth
                         transport.auth_interactive(self.device.username, handler)
-                        self.logger.info(f"✓ Successfully authenticated to {self.device.hostname} using keyboard-interactive")
+                        self.logger.debug(f"✓ Successfully authenticated to {self.device.hostname} using keyboard-interactive")
                         return True
                 except Exception as ki_err:
                     self.logger.debug(f"Keyboard-interactive auth also failed: {ki_err}")
@@ -2232,7 +2232,7 @@ class SNMPLLDPCollector:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
 
             if result.returncode == 0:
-                self.logger.info(f"SNMP test successful: {result.stdout.strip()}")
+                self.logger.debug(f"SNMP test successful: {result.stdout.strip()}")
                 return True
             else:
                 self.logger.error(f"SNMP test failed: {result.stderr.strip()}")
@@ -2273,7 +2273,7 @@ class SNMPLLDPCollector:
                     remote_description=n.get('remote_description', '')
                 ))
 
-            self.logger.info(f"Found {len(neighbors)} LLDP neighbors via SNMP on {self.device.hostname}")
+            self.logger.debug(f"Found {len(neighbors)} LLDP neighbors via SNMP on {self.device.hostname}")
             return neighbors
 
         except subprocess.TimeoutExpired:
@@ -2472,7 +2472,7 @@ class LLDPDiscovery:
 
     def collect_lldp_neighbors(self, device: DeviceConfig) -> List[LLDPNeighbor]:
         """Collect LLDP neighbors from a specific device (via SSH or SNMP)"""
-        self.logger.info(f"Collecting LLDP data from {device.hostname}...")
+        self.logger.debug(f"Collecting LLDP data from {device.hostname}...")
 
         # Check if SNMP is enabled for this device
         if device.use_snmp:
@@ -2482,7 +2482,7 @@ class LLDPDiscovery:
                 neighbors = snmp_collector.get_lldp_neighbors()
 
                 if neighbors:
-                    self.logger.info(f"Successfully collected {len(neighbors)} neighbors via SNMP from {device.hostname}")
+                    self.logger.debug(f"Successfully collected {len(neighbors)} neighbors via SNMP from {device.hostname}")
                 else:
                     self.logger.warning(f"No LLDP neighbors found via SNMP on {device.hostname}")
 
