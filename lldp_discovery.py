@@ -3055,13 +3055,21 @@ class LLDPDiscovery:
             }
 
         # Add discovered devices with minimal info
+        # Also count bridges and VMs for statistics
         for neighbor in self.neighbors:
             for device_name in [neighbor.local_device, neighbor.remote_device]:
                 if device_name not in device_info:
+                    # Determine type for discovered devices
+                    if device_name.startswith('Bridge-'):
+                        dev_type = 'bridge'
+                    else:
+                        dev_type = 'vm'
+
                     device_info[device_name] = {
-                        'type': 'discovered',
+                        'type': dev_type,
                         'ip': 'Not configured'
                     }
+                    device_type_counts[dev_type] += 1
 
         # Build connection list with speeds - include ALL physical links
         connections = []
@@ -3408,7 +3416,9 @@ class LLDPDiscovery:
             'arista': '#2ecc71',
             'aruba': '#f39c12',
             'ruijie': '#9b59b6',
-            'proxmox': '#1abc9c'
+            'proxmox': '#1abc9c',
+            'bridge': '#f1c40f',     # Yellow/Gold - for Proxmox bridges
+            'vm': '#e67e22'          # Bright Orange - for VMs
         }
 
         device_labels = {
@@ -3417,7 +3427,9 @@ class LLDPDiscovery:
             'arista': 'Arista EOS',
             'aruba': 'HP Aruba',
             'ruijie': 'Ruijie',
-            'proxmox': 'Proxmox VE'
+            'proxmox': 'Proxmox VE',
+            'bridge': 'Bridge (Proxmox)',
+            'vm': 'Virtual Machine'
         }
 
         for dtype, count in sorted(device_type_counts.items()):
@@ -3654,8 +3666,16 @@ class LLDPDiscovery:
 
         for device_name in all_devices_sorted:
             x, y = device_positions[device_name]
-            # Get device type from config, or default to 'unknown' for discovered devices
-            device_type = device_type_lookup.get(device_name, 'unknown')
+
+            # Determine device type with special handling for bridges and VMs
+            if device_name.startswith('Bridge-'):
+                device_type = 'bridge'
+            elif device_name in device_type_lookup:
+                device_type = device_type_lookup[device_name]
+            else:
+                # Discovered device (likely a VM)
+                device_type = 'vm'
+
             color = device_colors.get(device_type, '#95a5a6')
 
             html_content += f'''                        <g class="node" data-device="{device_name}">
