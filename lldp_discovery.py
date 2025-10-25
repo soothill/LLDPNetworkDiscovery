@@ -4128,10 +4128,14 @@ class LLDPDiscovery:
         // Helper functions
         function getDeviceColor(name) {{
             const n = name.toLowerCase();
+            // Check for Proxmox bridges first (Bridge-100, Bridge-106, etc.)
+            if (name.startsWith('Bridge-')) return '#f1c40f';  // Yellow/Gold for bridges
+            // Check for common device patterns
             if (n.includes('arista') || n.includes('aruba') || n.includes('2930') || n.includes('2520')) return '#3b82f6';
             if (n.includes('mikrotik') || n.includes('rb') || n.includes('crs')) return '#10b981';
             if (n.includes('proxmox') || n.includes('linux') || n.includes('nas')) return '#f59e0b';
-            return '#64748b';
+            // Everything else (likely VMs) - bright orange
+            return '#e67e22';
         }}
 
         function getLinkColor(speed) {{
