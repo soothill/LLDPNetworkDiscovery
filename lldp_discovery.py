@@ -2805,13 +2805,14 @@ class LLDPDiscovery:
         for edge_key, ports in edge_labels.items():
             formatted_edge_labels[edge_key] = "\n".join(ports)
 
-        # Calculate figure size based on number of nodes (minimum 20x15, scales up)
+        # Calculate figure size based on number of nodes (larger minimum for better resolution)
         num_nodes = len(G.nodes())
-        fig_width = max(20, num_nodes * 2)
-        fig_height = max(15, num_nodes * 1.5)
+        # Increased base size for better text readability
+        fig_width = max(30, num_nodes * 3)
+        fig_height = max(20, num_nodes * 2)
 
-        # Create visualization
-        plt.figure(figsize=(fig_width, fig_height))
+        # Create visualization with high DPI from the start
+        plt.figure(figsize=(fig_width, fig_height), dpi=150)
 
         # Use spring layout with more spacing (k controls distance between nodes)
         # Higher k = more spread out, more iterations = better layout
@@ -2834,11 +2835,11 @@ class LLDPDiscovery:
             device_type = G.nodes[node].get('device_type', 'unknown')
             node_colors.append(color_map.get(device_type, '#95a5a6'))
 
-        # Scale visual elements based on figure size
-        node_size = min(5000, max(2000, 100000 / num_nodes))  # Larger nodes for fewer devices
-        font_size_nodes = min(14, max(8, 120 / (num_nodes ** 0.5)))
-        font_size_edges = min(10, max(6, 80 / (num_nodes ** 0.5)))
-        edge_width = min(3, max(1.5, 40 / num_nodes))
+        # Scale visual elements based on figure size - with better minimum sizes for readability
+        node_size = min(8000, max(3000, 150000 / num_nodes))  # Larger nodes
+        font_size_nodes = min(16, max(10, 140 / (num_nodes ** 0.5)))  # Larger minimum font
+        font_size_edges = min(12, max(8, 100 / (num_nodes ** 0.5)))   # Larger minimum font
+        edge_width = min(3, max(2, 50 / num_nodes))
 
         # Draw nodes
         nx.draw_networkx_nodes(G, pos, node_color=node_colors,
@@ -2856,31 +2857,34 @@ class LLDPDiscovery:
                                      bbox=dict(boxstyle='round,pad=0.3',
                                              facecolor='white', alpha=0.8))
 
-        # Create legend
+        # Create legend with larger, more readable fonts
         legend_elements = [
             plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=color_map['linux'],
-                      markersize=10, label='Linux'),
+                      markersize=12, label='Linux', markeredgecolor='black', markeredgewidth=1),
             plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=color_map['mikrotik'],
-                      markersize=10, label='MikroTik'),
+                      markersize=12, label='MikroTik', markeredgecolor='black', markeredgewidth=1),
             plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=color_map['arista'],
-                      markersize=10, label='Arista'),
+                      markersize=12, label='Arista', markeredgecolor='black', markeredgewidth=1),
             plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=color_map['aruba'],
-                      markersize=10, label='HP Aruba'),
+                      markersize=12, label='HP Aruba', markeredgecolor='black', markeredgewidth=1),
             plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=color_map['ruijie'],
-                      markersize=10, label='Ruijie'),
+                      markersize=12, label='Ruijie', markeredgecolor='black', markeredgewidth=1),
             plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=color_map['proxmox'],
-                      markersize=10, label='Proxmox'),
+                      markersize=12, label='Proxmox', markeredgecolor='black', markeredgewidth=1),
         ]
-        plt.legend(handles=legend_elements, loc='upper left', fontsize=10)
+        plt.legend(handles=legend_elements, loc='upper left', fontsize=12,
+                  frameon=True, fancybox=True, shadow=True)
 
-        plt.title('LLDP Network Topology', fontsize=16, fontweight='bold')
+        plt.title('LLDP Network Topology', fontsize=20, fontweight='bold', pad=20)
         plt.axis('off')
-        plt.tight_layout()
+        plt.tight_layout(pad=2)
 
-        # Save to file
-        plt.savefig(output_file, dpi=300, bbox_inches='tight',
-                   facecolor='white', edgecolor='none')
-        self.logger.info(f"Network topology visualization saved to {output_file}")
+        # Save to file with very high DPI for crisp text
+        # DPI 600 produces professional quality output suitable for printing
+        plt.savefig(output_file, dpi=600, bbox_inches='tight',
+                   facecolor='white', edgecolor='none',
+                   format='png', metadata={'Software': 'LLDP Network Discovery'})
+        self.logger.info(f"Network topology visualization saved to {output_file} (high resolution)")
 
         # Optionally display
         # plt.show()
