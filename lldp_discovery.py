@@ -2878,7 +2878,9 @@ class LLDPDiscovery:
         # Get node colors and sizes based on device type and class
         node_colors = []
         node_sizes = []
-        base_node_size = min(8000, max(3000, 150000 / num_nodes))
+        # Larger base size to ensure hostnames fit inside circles
+        # Scale down gradually for large networks but maintain readability
+        base_node_size = min(15000, max(8000, 250000 / num_nodes))
 
         for node in G.nodes():
             device_type = G.nodes[node].get('device_type', 'unknown')
@@ -2888,16 +2890,18 @@ class LLDPDiscovery:
             node_colors.append(color_map.get(device_type, '#95a5a6'))
 
             # Size based on node class (bridges smaller, VMs smallest)
+            # But still large enough for text to fit
             if node_class == 'bridge':
-                node_sizes.append(base_node_size * 0.6)  # Bridges 60% size
+                node_sizes.append(base_node_size * 0.75)  # Bridges 75% size (increased from 60%)
             elif node_class == 'discovered':
-                node_sizes.append(base_node_size * 0.7)  # VMs/discovered 70% size
+                node_sizes.append(base_node_size * 0.85)  # VMs/discovered 85% size (increased from 70%)
             else:
                 node_sizes.append(base_node_size)  # Configured devices full size
 
         # Scale visual elements based on figure size - with better minimum sizes for readability
-        font_size_nodes = min(16, max(10, 140 / (num_nodes ** 0.5)))  # Larger minimum font
-        font_size_edges = min(12, max(8, 100 / (num_nodes ** 0.5)))   # Larger minimum font
+        # Larger fonts to ensure text is readable inside larger circles
+        font_size_nodes = min(18, max(12, 160 / (num_nodes ** 0.5)))  # Increased min from 10 to 12, max from 16 to 18
+        font_size_edges = min(14, max(9, 110 / (num_nodes ** 0.5)))   # Increased min from 8 to 9, max from 12 to 14
         edge_width = min(3, max(2, 50 / num_nodes))
 
         # Draw nodes with variable sizes
