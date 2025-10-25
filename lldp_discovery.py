@@ -34,9 +34,7 @@ try:
     import networkx as nx
 
     # Configure matplotlib for high-quality output
-    matplotlib.rcParams['figure.dpi'] = 150
-    matplotlib.rcParams['savefig.dpi'] = 600
-    matplotlib.rcParams['savefig.bbox'] = 'tight'
+    matplotlib.rcParams['figure.dpi'] = 100  # Lower for memory efficiency during layout
     matplotlib.rcParams['font.size'] = 10
     matplotlib.rcParams['axes.labelsize'] = 12
     matplotlib.rcParams['axes.titlesize'] = 14
@@ -45,9 +43,7 @@ try:
     matplotlib.rcParams['legend.fontsize'] = 12
     matplotlib.rcParams['figure.titlesize'] = 16
     matplotlib.rcParams['text.antialiased'] = True
-    matplotlib.rcParams['savefig.facecolor'] = 'white'
-    matplotlib.rcParams['savefig.edgecolor'] = 'none'
-    matplotlib.rcParams['savefig.format'] = 'png'
+    # Don't set savefig defaults globally - specify per-call instead
 
     GRAPHVIZ_AVAILABLE = True
 except ImportError:
@@ -2949,9 +2945,8 @@ class LLDPDiscovery:
         # Save as SVG first (vector format - infinitely scalable, low memory)
         svg_file = output_file.replace('.png', '.svg')
         self.logger.info(f"Saving SVG (vector format - perfect quality, low memory)...")
-        plt.savefig(svg_file, bbox_inches='tight',
-                   facecolor='white', edgecolor='none',
-                   format='svg')  # SVG doesn't support metadata parameter
+        # SVG backend doesn't support metadata parameter - use minimal parameters only
+        plt.savefig(svg_file, format='svg', bbox_inches='tight')
         self.logger.info(f"✓ SVG saved to {svg_file} (vector - zoom without quality loss)")
 
         # Save PNG with automatic DPI adjustment based on network size
