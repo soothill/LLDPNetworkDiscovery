@@ -2951,7 +2951,7 @@ class LLDPDiscovery:
         self.logger.info(f"Saving SVG (vector format - perfect quality, low memory)...")
         plt.savefig(svg_file, bbox_inches='tight',
                    facecolor='white', edgecolor='none',
-                   format='svg', metadata={'Software': 'LLDP Network Discovery'})
+                   format='svg')  # SVG doesn't support metadata parameter
         self.logger.info(f"✓ SVG saved to {svg_file} (vector - zoom without quality loss)")
 
         # Save PNG with automatic DPI adjustment based on network size
