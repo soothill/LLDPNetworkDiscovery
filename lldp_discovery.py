@@ -2878,7 +2878,7 @@ class LLDPDiscovery:
             'ruijie': '#9b59b6',     # Purple
             'proxmox': '#1abc9c',    # Turquoise
             'bridge': '#f1c40f',     # Yellow/Gold - for Proxmox bridges
-            'vm': '#ecf0f1'          # Light grey - for VMs/discovered devices
+            'vm': '#e67e22'          # Bright Orange - for VMs/discovered devices
         }
 
         # Get node colors and sizes based on device type and class
