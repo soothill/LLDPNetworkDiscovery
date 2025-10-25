@@ -2158,22 +2158,33 @@ class LLDPParser:
                         ))
 
         # Add bridge connections with VM information
-        # For each bridge, show it as a "connection" to a pseudo-device representing the VMs
+        # Create separate nodes for bridges and VMs in the topology:
+        # Proxmox -> Bridge-X -> VM
         for vmid, vms in bridges.items():
             if len(vms) > 0:  # Only show bridges with VMs
-                # Create a descriptive "device" name for the bridge showing connected VMs
+                bridge_name = f"Bridge-{vmid}"
+
                 # Deduplicate VM names (VMs with multiple NICs will have multiple tap interfaces)
                 vm_names = sorted(set(vm['vm_name'] for vm in vms))
-                bridge_desc = f"Bridge-{vmid} (VMs: {', '.join(vm_names)})"
 
-                # Show this as a connection from a fwbr interface
+                # Connection 1: Proxmox host -> Bridge
                 neighbors.append(LLDPNeighbor(
                     local_device=hostname,
                     local_port=f"fwbr{vmid}",
-                    remote_device=bridge_desc,
-                    remote_port='virtual',
-                    remote_description=f"{len(vms)} interface(s), {len(vm_names)} unique VM(s)"
+                    remote_device=bridge_name,
+                    remote_port="bridge",
+                    remote_description=f"Proxmox virtual bridge {vmid}"
                 ))
+
+                # Connection 2: Bridge -> Each VM
+                for vm_name in vm_names:
+                    neighbors.append(LLDPNeighbor(
+                        local_device=bridge_name,
+                        local_port=f"vmbr{vmid}",
+                        remote_device=vm_name,
+                        remote_port="virtual",
+                        remote_description=f"VM connected via bridge {vmid}"
+                    ))
 
         logger.info(f"Proxmox: Returning {len(neighbors)} neighbors ({len(seen_external)} external, {len(bridges)} bridges)")
         return neighbors
@@ -2802,14 +2813,31 @@ class LLDPDiscovery:
         # Create directed graph
         G = nx.Graph()  # Using undirected graph since LLDP is bidirectional
 
-        # Add all devices as nodes
+        # Add all configured devices as nodes
         for device in self.devices:
-            G.add_node(device.hostname, device_type=device.device_type)
+            G.add_node(device.hostname, device_type=device.device_type, node_class='device')
 
         # Add edges with port information
-        # Use MultiGraph to support multiple edges between same devices
+        # Also auto-discover and add any nodes that appear in connections but aren't configured
+        # (e.g., Proxmox bridges, VMs discovered through LLDP)
         edge_labels = {}
         for neighbor in self.neighbors:
+            # Auto-add nodes that appear in connections but aren't in configured devices
+            if neighbor.local_device not in G.nodes():
+                # Determine node type from name
+                if neighbor.local_device.startswith('Bridge-'):
+                    G.add_node(neighbor.local_device, device_type='bridge', node_class='bridge')
+                else:
+                    G.add_node(neighbor.local_device, device_type='unknown', node_class='discovered')
+
+            if neighbor.remote_device not in G.nodes():
+                # Determine node type from name
+                if neighbor.remote_device.startswith('Bridge-'):
+                    G.add_node(neighbor.remote_device, device_type='bridge', node_class='bridge')
+                else:
+                    # Discovered device (VM or other device found through LLDP)
+                    G.add_node(neighbor.remote_device, device_type='vm', node_class='discovered')
+
             # Create edge
             G.add_edge(neighbor.local_device, neighbor.remote_device)
 
@@ -2845,24 +2873,39 @@ class LLDPDiscovery:
             'arista': '#2ecc71',     # Green
             'aruba': '#f39c12',      # Orange
             'ruijie': '#9b59b6',     # Purple
-            'proxmox': '#1abc9c'     # Turquoise
+            'proxmox': '#1abc9c',    # Turquoise
+            'bridge': '#f1c40f',     # Yellow/Gold - for Proxmox bridges
+            'vm': '#ecf0f1'          # Light grey - for VMs/discovered devices
         }
 
-        # Get node colors based on device type
+        # Get node colors and sizes based on device type and class
         node_colors = []
+        node_sizes = []
+        base_node_size = min(8000, max(3000, 150000 / num_nodes))
+
         for node in G.nodes():
             device_type = G.nodes[node].get('device_type', 'unknown')
+            node_class = G.nodes[node].get('node_class', 'device')
+
+            # Color based on device type
             node_colors.append(color_map.get(device_type, '#95a5a6'))
 
+            # Size based on node class (bridges smaller, VMs smallest)
+            if node_class == 'bridge':
+                node_sizes.append(base_node_size * 0.6)  # Bridges 60% size
+            elif node_class == 'discovered':
+                node_sizes.append(base_node_size * 0.7)  # VMs/discovered 70% size
+            else:
+                node_sizes.append(base_node_size)  # Configured devices full size
+
         # Scale visual elements based on figure size - with better minimum sizes for readability
-        node_size = min(8000, max(3000, 150000 / num_nodes))  # Larger nodes
         font_size_nodes = min(16, max(10, 140 / (num_nodes ** 0.5)))  # Larger minimum font
         font_size_edges = min(12, max(8, 100 / (num_nodes ** 0.5)))   # Larger minimum font
         edge_width = min(3, max(2, 50 / num_nodes))
 
-        # Draw nodes
+        # Draw nodes with variable sizes
         nx.draw_networkx_nodes(G, pos, node_color=node_colors,
-                              node_size=node_size, alpha=0.9,
+                              node_size=node_sizes, alpha=0.9,
                               edgecolors='black', linewidths=2)
 
         # Draw edges
@@ -2890,6 +2933,10 @@ class LLDPDiscovery:
                       markersize=12, label='Ruijie', markeredgecolor='black', markeredgewidth=1),
             plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=color_map['proxmox'],
                       markersize=12, label='Proxmox', markeredgecolor='black', markeredgewidth=1),
+            plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=color_map['bridge'],
+                      markersize=10, label='Bridge (Proxmox)', markeredgecolor='black', markeredgewidth=1),
+            plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=color_map['vm'],
+                      markersize=9, label='VM / Discovered', markeredgecolor='black', markeredgewidth=1),
         ]
         plt.legend(handles=legend_elements, loc='upper left', fontsize=12,
                   frameon=True, fancybox=True, shadow=True)

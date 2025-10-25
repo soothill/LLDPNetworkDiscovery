@@ -134,22 +134,33 @@ def parse_proxmox(output: str, hostname: str) -> List[LLDPNeighbor]:
                     ))
 
     # Add bridge connections with VM information
-    # For each bridge, show it as a "connection" to a pseudo-device representing the VMs
+    # Create separate nodes for bridges and VMs in the topology:
+    # Proxmox -> Bridge-X -> VM
     for vmid, vms in bridges.items():
         if len(vms) > 0:  # Only show bridges with VMs
-            # Create a descriptive "device" name for the bridge showing connected VMs
+            bridge_name = f"Bridge-{vmid}"
+
             # Deduplicate VM names (VMs with multiple NICs will have multiple tap interfaces)
             vm_names = sorted(set(vm['vm_name'] for vm in vms))
-            bridge_desc = f"Bridge-{vmid} (VMs: {', '.join(vm_names)})"
 
-            # Show this as a connection from a fwbr interface
+            # Connection 1: Proxmox host -> Bridge
             neighbors.append(LLDPNeighbor(
                 local_device=hostname,
                 local_port=f"fwbr{vmid}",
-                remote_device=bridge_desc,
-                remote_port='virtual',
-                remote_description=f"{len(vms)} interface(s), {len(vm_names)} unique VM(s)"
+                remote_device=bridge_name,
+                remote_port="bridge",
+                remote_description=f"Proxmox virtual bridge {vmid}"
             ))
+
+            # Connection 2: Bridge -> Each VM
+            for vm_name in vm_names:
+                neighbors.append(LLDPNeighbor(
+                    local_device=bridge_name,
+                    local_port=f"vmbr{vmid}",
+                    remote_device=vm_name,
+                    remote_port="virtual",
+                    remote_description=f"VM connected via bridge {vmid}"
+                ))
 
     print(f"Proxmox: Returning {len(neighbors)} neighbors ({len(seen_external)} external, {len(bridges)} bridges)")
     return neighbors
@@ -247,42 +258,47 @@ def main():
 
     print(f"\nParsed {len(neighbors)} neighbors:\n")
 
-    # Separate external connections from bridge connections
-    external = []
-    bridges = []
+    # Separate connections by type
+    external = []  # Physical connections (eno*, ens*, eth*)
+    proxmox_to_bridge = []  # Proxmox -> Bridge connections
+    bridge_to_vm = []  # Bridge -> VM connections
 
     for n in neighbors:
         if n.local_port.startswith('fwbr'):
-            bridges.append(n)
+            # Proxmox host -> Bridge
+            proxmox_to_bridge.append(n)
+        elif n.local_device.startswith('Bridge-'):
+            # Bridge -> VM
+            bridge_to_vm.append(n)
         else:
+            # Physical/external connections
             external.append(n)
 
     print("External Connections:")
     print("-" * 80)
     for n in external:
-        print(f"  {n.local_port:15} -> {n.remote_device:30} (port: {n.remote_port})")
+        print(f"  {n.local_device:20} {n.local_port:15} -> {n.remote_device:30} (port: {n.remote_port})")
 
-    print("\nBridge Connections (VMs):")
+    print("\nProxmox -> Bridge Connections:")
     print("-" * 80)
-    for n in bridges:
-        print(f"  {n.local_port:15} -> {n.remote_device}")
-        if n.remote_description:
-            print(f"                     Description: {n.remote_description}")
+    for n in proxmox_to_bridge:
+        print(f"  {n.local_device:20} {n.local_port:15} -> {n.remote_device}")
+
+    print("\nBridge -> VM Connections:")
+    print("-" * 80)
+    for n in bridge_to_vm:
+        print(f"  {n.local_device:20} {n.local_port:15} -> {n.remote_device}")
 
     print("\n" + "=" * 80)
-    print(f"Total: {len(external)} external connections, {len(bridges)} bridges with VMs")
+    print(f"Total: {len(external)} external, {len(proxmox_to_bridge)} bridges, {len(bridge_to_vm)} VMs")
 
     # Validation
     print("\nValidation:")
     expected_vms = ['testvm', 'syslog', 'nvmeof', 'openmediavault.soothill.com',
                     'observium', 'wificontroller.soothill.com']
-    found_vms = set()
-    for n in bridges:
-        # Extract VM names from bridge description
-        if 'VMs:' in n.remote_device:
-            vm_part = n.remote_device.split('VMs:')[1].strip(' )')
-            vms = [vm.strip() for vm in vm_part.split(',')]
-            found_vms.update(vms)
+
+    # VMs are now in bridge_to_vm connections
+    found_vms = set(n.remote_device for n in bridge_to_vm)
 
     print(f"  Expected VMs: {len(expected_vms)}")
     print(f"  Found VMs: {len(found_vms)}")
@@ -294,7 +310,13 @@ def main():
     else:
         print("  ✓ All expected VMs found!")
 
-    return len(external) > 0 and len(bridges) > 0
+    # Check topology structure
+    print("\nTopology Structure:")
+    print(f"  ✓ {len(external)} external connections")
+    print(f"  ✓ {len(proxmox_to_bridge)} Proxmox->Bridge connections")
+    print(f"  ✓ {len(bridge_to_vm)} Bridge->VM connections")
+
+    return len(external) > 0 and len(proxmox_to_bridge) > 0 and len(bridge_to_vm) > 0
 
 if __name__ == '__main__':
     success = main()
