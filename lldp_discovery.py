@@ -2006,9 +2006,163 @@ class LLDPParser:
 
     @staticmethod
     def parse_proxmox(output: str, hostname: str) -> List[LLDPNeighbor]:
-        """Parse LLDP output from Proxmox hosts (using lldpctl)"""
-        # Proxmox uses lldpd, so we can reuse the Linux parser
-        return LLDPParser.parse_linux(output, hostname)
+        """Parse LLDP output from Proxmox hosts (using lldpctl)
+
+        Enhanced to detect Proxmox bridge topology and show VMs connected to bridges.
+
+        Proxmox interface naming:
+        - tap<VMID>i<N>: VM TAP interface (connects to VM guest)
+        - fwpr<VMID>p<N>: Firewall proxy port (bridge side facing VM)
+        - fwln<VMID>i<N>: Firewall link in (bridge side facing physical network)
+        - vmbr<N>: Virtual bridge
+        - Physical interfaces: eno*, ens*, eth*
+
+        Only shows bridges that have VMs connected to them.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        # Parse all LLDP entries first (including self-connections)
+        all_neighbors = []
+        current_interface = None
+        remote_system = None
+        remote_port = None
+        remote_desc = None
+
+        for line in output.split('\n'):
+            line = line.strip()
+
+            if line.startswith('Interface:'):
+                # Save previous neighbor if complete
+                if current_interface and remote_system:
+                    all_neighbors.append({
+                        'local_interface': current_interface,
+                        'remote_system': remote_system,
+                        'remote_port': remote_port or '',
+                        'remote_desc': remote_desc
+                    })
+
+                # Extract interface name
+                iface_part = line.split(':')[1].strip()
+                current_interface = iface_part.split(',')[0].strip()
+                remote_system = None
+                remote_port = None
+                remote_desc = None
+
+            elif 'SysName:' in line or 'System Name:' in line:
+                if 'SysName:' in line:
+                    remote_system = line.split('SysName:')[1].strip()
+                else:
+                    remote_system = line.split('System Name:')[1].strip()
+
+            elif 'PortID:' in line or 'Port ID:' in line:
+                if 'PortID:' in line:
+                    remote_port_raw = line.split('PortID:')[1].strip()
+                else:
+                    remote_port_raw = line.split('Port ID:')[1].strip()
+                # Remove "mac " prefix if present
+                remote_port = remote_port_raw.replace('mac ', '').replace('ifname ', '')
+
+            elif 'PortDescr:' in line and not remote_port:
+                remote_port = line.split('PortDescr:')[1].strip()
+
+            elif 'Port Description:' in line:
+                remote_desc = line.split('Port Description:')[1].strip()
+
+        # Add last neighbor
+        if current_interface and remote_system:
+            all_neighbors.append({
+                'local_interface': current_interface,
+                'remote_system': remote_system,
+                'remote_port': remote_port or '',
+                'remote_desc': remote_desc
+            })
+
+        logger.info(f"Proxmox: Parsed {len(all_neighbors)} total LLDP entries from {hostname}")
+
+        # Now analyze Proxmox bridge topology
+        # Build a map of interfaces to their LLDP neighbors
+        interface_map = {}
+        for entry in all_neighbors:
+            interface_map[entry['local_interface']] = entry
+
+        # Identify VM tap interfaces and their connected VMs
+        vm_connections = {}  # Maps VM name to list of interfaces
+        bridges = {}  # Maps bridge ID to list of VMs
+
+        for iface, entry in interface_map.items():
+            # Detect tap interfaces (VM side)
+            if iface.startswith('tap'):
+                # Extract VMID from tap interface (e.g., tap100i0 -> 100)
+                match = re.match(r'tap(\d+)i(\d+)', iface)
+                if match:
+                    vmid = match.group(1)
+                    vm_name = entry['remote_system']
+
+                    if vm_name != hostname:  # Not a self-connection
+                        if vm_name not in vm_connections:
+                            vm_connections[vm_name] = []
+                        vm_connections[vm_name].append({
+                            'vmid': vmid,
+                            'interface': iface,
+                            'vm_port': entry['remote_port']
+                        })
+
+                        # Associate with bridge
+                        if vmid not in bridges:
+                            bridges[vmid] = []
+                        bridges[vmid].append({
+                            'vm_name': vm_name,
+                            'vm_interface': iface,
+                            'vm_port': entry['remote_port']
+                        })
+
+        logger.info(f"Proxmox: Found {len(vm_connections)} VMs connected through bridges")
+
+        # Build final neighbor list
+        neighbors = []
+        seen_external = set()
+
+        # Add external connections (physical interfaces connecting to switches/routers)
+        for iface, entry in interface_map.items():
+            # Physical interfaces or bridge interfaces connecting externally
+            if (iface.startswith('eno') or iface.startswith('ens') or iface.startswith('eth') or
+                iface.startswith('vmbr')):
+                remote_sys = entry['remote_system']
+
+                # Skip self-connections and duplicates
+                if remote_sys != hostname:
+                    conn_key = (iface, remote_sys, entry['remote_port'])
+                    if conn_key not in seen_external:
+                        seen_external.add(conn_key)
+                        neighbors.append(LLDPNeighbor(
+                            local_device=hostname,
+                            local_port=iface,
+                            remote_device=remote_sys,
+                            remote_port=entry['remote_port'],
+                            remote_description=entry['remote_desc']
+                        ))
+
+        # Add bridge connections with VM information
+        # For each bridge, show it as a "connection" to a pseudo-device representing the VMs
+        for vmid, vms in bridges.items():
+            if len(vms) > 0:  # Only show bridges with VMs
+                # Create a descriptive "device" name for the bridge showing connected VMs
+                # Deduplicate VM names (VMs with multiple NICs will have multiple tap interfaces)
+                vm_names = sorted(set(vm['vm_name'] for vm in vms))
+                bridge_desc = f"Bridge-{vmid} (VMs: {', '.join(vm_names)})"
+
+                # Show this as a connection from a fwbr interface
+                neighbors.append(LLDPNeighbor(
+                    local_device=hostname,
+                    local_port=f"fwbr{vmid}",
+                    remote_device=bridge_desc,
+                    remote_port='virtual',
+                    remote_description=f"{len(vms)} interface(s), {len(vm_names)} unique VM(s)"
+                ))
+
+        logger.info(f"Proxmox: Returning {len(neighbors)} neighbors ({len(seen_external)} external, {len(bridges)} bridges)")
+        return neighbors
 
 
 class SNMPLLDPCollector:
