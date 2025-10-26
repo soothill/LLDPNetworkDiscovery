@@ -4050,24 +4050,32 @@ class LLDPDiscovery:
                 <strong>Link Speeds:</strong><br>
                 <div style="margin-top: 10px;">
                     <div class="legend-item">
-                        <div class="legend-line" style="background: #ef4444;"></div>
+                        <div class="legend-line" style="background: #ef4444; width: 30px; height: 2px;"></div>
                         <span>Unknown / Down</span>
                     </div>
                     <div class="legend-item">
-                        <div class="legend-line" style="background: #f59e0b;"></div>
-                        <span>100M</span>
+                        <div class="legend-line" style="background: #f59e0b; width: 30px; height: 2px;"></div>
+                        <span>100 Mbps</span>
                     </div>
                     <div class="legend-item">
-                        <div class="legend-line" style="background: #3b82f6;"></div>
-                        <span>1G</span>
+                        <div class="legend-line" style="background: #3b82f6; width: 30px; height: 3px;"></div>
+                        <span>1 Gbps</span>
                     </div>
                     <div class="legend-item">
-                        <div class="legend-line" style="background: #10b981;"></div>
-                        <span>10G</span>
+                        <div class="legend-line" style="background: #10b981; width: 30px; height: 4px;"></div>
+                        <span>10 Gbps</span>
                     </div>
                     <div class="legend-item">
-                        <div class="legend-line" style="background: #8b5cf6;"></div>
-                        <span>40G+</span>
+                        <div class="legend-line" style="background: #fbbf24; width: 30px; height: 5px;"></div>
+                        <span>40 Gbps</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-line" style="background: #f97316; width: 30px; height: 6px;"></div>
+                        <span>100 Gbps</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-line" style="background: #ef4444; width: 30px; height: 7px; box-shadow: 0 0 8px rgba(239, 68, 68, 0.5);"></div>
+                        <span>400 Gbps</span>
                     </div>
                 </div>
             </div>
@@ -4075,20 +4083,36 @@ class LLDPDiscovery:
                 <strong>Device Types:</strong><br>
                 <div style="margin-top: 10px;">
                     <div class="legend-item">
-                        <div class="legend-node" style="background: #3b82f6;"></div>
-                        <span>Switches (Arista/Aruba)</span>
+                        <div class="legend-node" style="background: #3498db;"></div>
+                        <span>Linux</span>
                     </div>
                     <div class="legend-item">
-                        <div class="legend-node" style="background: #10b981;"></div>
+                        <div class="legend-node" style="background: #e74c3c;"></div>
                         <span>MikroTik</span>
                     </div>
                     <div class="legend-item">
-                        <div class="legend-node" style="background: #f59e0b;"></div>
-                        <span>Servers (Proxmox/Linux)</span>
+                        <div class="legend-node" style="background: #2ecc71;"></div>
+                        <span>Arista</span>
                     </div>
                     <div class="legend-item">
-                        <div class="legend-node" style="background: #64748b;"></div>
-                        <span>Other Devices</span>
+                        <div class="legend-node" style="background: #f39c12;"></div>
+                        <span>HP Aruba</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-node" style="background: #9b59b6;"></div>
+                        <span>Ruijie</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-node" style="background: #1abc9c;"></div>
+                        <span>Proxmox</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-node" style="background: #f1c40f;"></div>
+                        <span>Bridge (Proxmox)</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-node" style="background: #e67e22;"></div>
+                        <span>Virtual Machine</span>
                     </div>
                 </div>
             </div>
