@@ -4123,12 +4123,14 @@ class LLDPDiscovery:
         }}
 
         function getLinkColor(speed) {{
-            if (!speed || speed === 'Unknown' || speed === 'Down') return '#ef4444';
+            if (!speed || speed === 'Unknown' || speed === 'Down') return '#ef4444';  // Red
             const s = speed.toLowerCase();
-            if (s.includes('100m')) return '#f59e0b';
-            if (s.includes('1g') || s.includes('1000')) return '#3b82f6';
-            if (s.includes('10g') || s.includes('10000')) return '#10b981';
-            if (s.includes('40g') || s.includes('100g')) return '#8b5cf6';
+            if (s.includes('100m')) return '#f59e0b';      // Orange - 100 Mbps
+            if (s.includes('1g') || s.includes('1000')) return '#3b82f6';  // Blue - 1 Gbps
+            if (s.includes('10g') || s.includes('10000')) return '#10b981';  // Green - 10 Gbps
+            if (s.includes('40g') || s.includes('40000')) return '#fbbf24';  // Yellow - 40 Gbps
+            if (s.includes('100g') || s.includes('100000')) return '#f97316';  // Bright Orange - 100 Gbps
+            if (s.includes('400g') || s.includes('400000')) return '#ef4444';  // Red - 400 Gbps
             return '#ef4444';
         }}
 
@@ -4138,7 +4140,9 @@ class LLDPDiscovery:
             if (s.includes('100m')) return 2;
             if (s.includes('1g')) return 3;
             if (s.includes('10g')) return 4;
-            if (s.includes('40g') || s.includes('100g')) return 5;
+            if (s.includes('40g')) return 5;
+            if (s.includes('100g')) return 6;
+            if (s.includes('400g')) return 7;
             return 2;
         }}
 
